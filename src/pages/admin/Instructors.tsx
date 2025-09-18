@@ -5,6 +5,7 @@ import { Button } from '../../components/ui/Button'
 import { Search, SquarePen, Trash2, Plus, X, ChevronDown, Check, Mail } from 'lucide-react'
 import { api } from '../../lib/api'
 import { showToast } from '../../lib/toast'
+import { createPortal } from 'react-dom'
 
 type ApiUser = {
   id: string
@@ -66,6 +67,16 @@ export default function Instructors() {
   // Delete confirm
   const [confirmId, setConfirmId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
+
+  // lock scroll when any modal is open
+  const anyModalOpen = createOpen || editOpen || !!confirmId
+  useEffect(() => {
+    if (anyModalOpen) {
+      const prev = document.body.style.overflow
+      document.body.style.overflow = 'hidden'
+      return () => { document.body.style.overflow = prev }
+    }
+  }, [anyModalOpen])
 
   useEffect(() => { void preload() }, [])
 
@@ -207,180 +218,192 @@ export default function Instructors() {
     }
   }
 
+  const ultraBusy = loading || creating || saving || deleting
+  const ultraLabel =
+    loading ? 'Loading instructors…' :
+    creating ? 'Creating instructor…' :
+    saving ? 'Saving changes…' :
+    deleting ? 'Deleting instructor…' : ''
+
   return (
-    // <- limit page width so the table doesn’t stretch too far
-    <div className="space-y-4 max-w-[1200px] mx-auto">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Instructor Management</h1>
-          <p className="text-neutral-500">Manage all instructors in the academy</p>
+    <>
+      {/* page */}
+      <div className="space-y-4 max-w-[1200px] mx-auto">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold">Instructor Management</h1>
+            <p className="text-neutral-500">Manage all instructors in the academy</p>
+          </div>
+          <Button className="inline-flex items-center gap-2 rounded-xl bg-[#0B5CD7] px-4 py-2 text-white hover:brightness-95" onClick={openCreate}>
+            <Plus className="h-4 w-4" /> Add Instructor
+          </Button>
         </div>
-        <Button className="inline-flex items-center gap-2 rounded-xl bg-[#0B5CD7] px-4 py-2 text-white hover:brightness-95" onClick={openCreate}>
-          <Plus className="h-4 w-4" /> Add Instructor
-        </Button>
-      </div>
 
-      <Card>
-        <CardHeader>
-          {/* Search with aligned icon */}
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-neutral-400" />
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Search instructors..."
-              aria-label="Search instructors"
-              className="h-12 w-full rounded-2xl border border-neutral-200 bg-[#F4F5F7] pl-10 pr-3 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-[#0B5CD7] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#0B5CD7]/20"
-            />
-          </div>
-        </CardHeader>
-
-        <CardContent className="overflow-hidden">
-          {/* Mobile cards */}
-          <div className="grid gap-3 md:hidden">
-            {loading ? (
-              <div className="py-8 text-center text-neutral-500">Loading…</div>
-            ) : filtered.length === 0 ? (
-              <div className="py-8 text-center text-neutral-500">No instructors found.</div>
-            ) : (
-              filtered.map(r => (
-                <div key={r.id} className="rounded-2xl border border-neutral-200 bg-white p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="font-medium text-neutral-900">{r.name}</div>
-                      <div className="text-sm text-neutral-700">{r.email}</div>
-                      {r.expertise && <div className="mt-1 text-sm text-neutral-700">{r.expertise}</div>}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button className="rounded-md p-2 hover:bg-neutral-100" title="Edit" onClick={() => openEdit(r)}>
-                        <SquarePen className="h-4 w-4 text-neutral-700" />
-                      </button>
-                      <button className="rounded-md p-2 hover:bg-neutral-100" title="Delete" onClick={() => setConfirmId(r.id)}>
-                        <Trash2 className="h-4 w-4 text-red-600" />
-                      </button>
-                    </div>
-                  </div>
-                  {r.courseTitles.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-2">{renderCourseChips(r.courseTitles)}</div>
-                  )}
-                  <div className="mt-2 flex items-center justify-between text-sm">
-                    <span className="text-neutral-600">{r.joinDate}</span>
-                    {renderStatusBadge(r.status)}
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-
-          {/* Desktop table */}
-          <div className="hidden md:block overflow-x-auto">
-            <table className="w-full min-w-[980px] table-fixed border-separate border-spacing-0">
-              <thead className="sticky top-0 bg-white">
-                <tr className="text-left text-neutral-700">
-                  <Th className="w-[220px]">Instructor</Th>
-                  <Th className="w-[200px]">Email</Th>
-                  <Th className="w-[180px]">Expertise</Th>
-                  <Th className="w-[180px]">Assigned Courses</Th>
-                  <Th className="w-[140px]">Join Date</Th>
-                  <Th className="w-[110px]">Status</Th>
-                  <Th className="w-[110px]">Actions</Th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading ? (
-                  <tr><td colSpan={7} className="py-10 text-center text-neutral-500">Loading…</td></tr>
-                ) : filtered.length === 0 ? (
-                  <tr><td colSpan={7} className="py-10 text-center text-neutral-500">No instructors found.</td></tr>
-                ) : (
-                  filtered.map(r => (
-                    <tr key={r.id} className="border-b border-neutral-200 last:border-0">
-                      <Td className="font-medium text-neutral-900 whitespace-nowrap overflow-hidden text-ellipsis">{r.name}</Td>
-                      <Td className="text-neutral-700 whitespace-nowrap overflow-hidden text-ellipsis">{r.email}</Td>
-                      <Td className="text-neutral-800 whitespace-nowrap overflow-hidden text-ellipsis">{r.expertise || '-'}</Td>
-                      <Td className="space-x-2">{renderCourseChips(r.courseTitles)}</Td>
-                      <Td className="whitespace-nowrap">{r.joinDate}</Td>
-                      <Td>{renderStatusBadge(r.status)}</Td>
-                      <Td className="flex items-center gap-3">
-                        <button className="text-neutral-600 hover:text-black" title="Edit" onClick={() => openEdit(r)}>
-                          <SquarePen className="h-4 w-4" />
-                        </button>
-                        <button className="text-red-600 hover:text-red-700" title="Delete" onClick={() => setConfirmId(r.id)}>
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </Td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Create modal */}
-      {createOpen && (
-        <Modal title="Add New Instructor" subtext="Add a new instructor and assign courses" onClose={() => !creating && setCreateOpen(false)}>
-          <form onSubmit={onCreate} className="space-y-4">
-            <div className="grid gap-4">
-              <LabeledInput label="Name" placeholder="Full name" value={cName} onChange={e => setCName(e.target.value)} required />
-              <LabeledInput label="Email" type="email" placeholder="Email address" value={cEmail} onChange={e => setCEmail(e.target.value)} required />
-              <LabeledInput label="Expertise" placeholder="Area of expertise" value={cExpertise} onChange={e => setCExpertise(e.target.value)} />
-              <LabeledSelect
-                label="Assign Course"
-                placeholder="Select course"
-                value={cCourseId}
-                onChange={setCCourseId}
-                options={courses.map(c => ({ value: c.id, label: c.title }))}
+        <Card>
+          <CardHeader>
+            {/* Search with aligned icon */}
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-neutral-400" />
+              <input
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+                placeholder="Search instructors..."
+                aria-label="Search instructors"
+                className="h-12 w-full rounded-2xl border border-neutral-200 bg-[#F4F5F7] pl-10 pr-3 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-[#0B5CD7] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#0B5CD7]/20"
               />
             </div>
-            <div className="flex items-center justify-end">
-              <button type="submit" className="inline-flex items-center gap-2 rounded-xl bg-[#0B5CD7] px-4 py-2 text-white hover:brightness-95" disabled={creating}>
-                <Mail className="h-4 w-4" />
-                {creating ? 'Adding…' : 'Add & Send Email'}
+          </CardHeader>
+
+          <CardContent className="overflow-hidden">
+            {/* Mobile cards */}
+            <div className="grid gap-3 md:hidden">
+              {loading ? (
+                <div className="py-8 text-center text-neutral-500">Loading…</div>
+              ) : filtered.length === 0 ? (
+                <div className="py-8 text-center text-neutral-500">No instructors found.</div>
+              ) : (
+                filtered.map(r => (
+                  <div key={r.id} className="rounded-2xl border border-neutral-200 bg-white p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-medium text-neutral-900">{r.name}</div>
+                        <div className="text-sm text-neutral-700">{r.email}</div>
+                        {r.expertise && <div className="mt-1 text-sm text-neutral-700">{r.expertise}</div>}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button className="rounded-md p-2 hover:bg-neutral-100" title="Edit" onClick={() => openEdit(r)}>
+                          <SquarePen className="h-4 w-4 text-neutral-700" />
+                        </button>
+                        <button className="rounded-md p-2 hover:bg-neutral-100" title="Delete" onClick={() => setConfirmId(r.id)}>
+                          <Trash2 className="h-4 w-4 text-red-600" />
+                        </button>
+                      </div>
+                    </div>
+                    {r.courseTitles.length > 0 && (
+                      <div className="mt-2 flex flex-wrap gap-2">{renderCourseChips(r.courseTitles)}</div>
+                    )}
+                    <div className="mt-2 flex items-center justify-between text-sm">
+                      <span className="text-neutral-600">{r.joinDate}</span>
+                      {renderStatusBadge(r.status)}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {/* Desktop table */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full min-w-[980px] table-fixed border-separate border-spacing-0">
+                <thead className="sticky top-0 bg-white">
+                  <tr className="text-left text-neutral-700">
+                    <Th className="w-[220px]">Instructor</Th>
+                    <Th className="w-[200px]">Email</Th>
+                    <Th className="w-[180px]">Expertise</Th>
+                    <Th className="w-[180px]">Assigned Courses</Th>
+                    <Th className="w-[140px]">Join Date</Th>
+                    <Th className="w-[110px]">Status</Th>
+                    <Th className="w-[110px]">Actions</Th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {loading ? (
+                    <tr><td colSpan={7} className="py-10 text-center text-neutral-500">Loading…</td></tr>
+                  ) : filtered.length === 0 ? (
+                    <tr><td colSpan={7} className="py-10 text-center text-neutral-500">No instructors found.</td></tr>
+                  ) : (
+                    filtered.map(r => (
+                      <tr key={r.id} className="border-b border-neutral-200 last:border-0">
+                        <Td className="font-medium text-neutral-900 whitespace-nowrap overflow-hidden text-ellipsis">{r.name}</Td>
+                        <Td className="text-neutral-700 whitespace-nowrap overflow-hidden text-ellipsis">{r.email}</Td>
+                        <Td className="text-neutral-800 whitespace-nowrap overflow-hidden text-ellipsis">{r.expertise || '-'}</Td>
+                        <Td className="space-x-2">{renderCourseChips(r.courseTitles)}</Td>
+                        <Td className="whitespace-nowrap">{r.joinDate}</Td>
+                        <Td>{renderStatusBadge(r.status)}</Td>
+                        <Td className="flex items-center gap-3">
+                          <button className="text-neutral-600 hover:text-black" title="Edit" onClick={() => openEdit(r)}>
+                            <SquarePen className="h-4 w-4" />
+                          </button>
+                          <button className="text-red-600 hover:text-red-700" title="Delete" onClick={() => setConfirmId(r.id)}>
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </Td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Create modal */}
+        {createOpen && (
+          <Modal title="Add New Instructor" subtext="Add a new instructor and assign courses" onClose={() => !creating && setCreateOpen(false)}>
+            <form onSubmit={onCreate} className="space-y-4">
+              <div className="grid gap-4">
+                <LabeledInput label="Name" placeholder="Full name" value={cName} onChange={e => setCName(e.target.value)} required />
+                <LabeledInput label="Email" type="email" placeholder="Email address" value={cEmail} onChange={e => setCEmail(e.target.value)} required />
+                <LabeledInput label="Expertise" placeholder="Area of expertise" value={cExpertise} onChange={e => setCExpertise(e.target.value)} />
+                <LabeledSelect
+                  label="Assign Course"
+                  placeholder="Select course"
+                  value={cCourseId}
+                  onChange={setCCourseId}
+                  options={courses.map(c => ({ value: c.id, label: c.title }))}
+                />
+              </div>
+              <div className="flex items-center justify-end">
+                <button type="submit" className="inline-flex items-center gap-2 rounded-xl bg-[#0B5CD7] px-4 py-2 text-white hover:brightness-95" disabled={creating}>
+                  <Mail className="h-4 w-4" />
+                  {creating ? 'Adding…' : 'Add & Send Email'}
+                </button>
+              </div>
+            </form>
+          </Modal>
+        )}
+
+        {/* Edit modal */}
+        {editOpen && editRow && (
+          <Modal title="Edit Instructor" onClose={() => !saving && setEditOpen(false)}>
+            <form onSubmit={onSave} className="space-y-4">
+              <div className="grid gap-4">
+                <LabeledInput label="Name" value={eName} onChange={e => setEName(e.target.value)} required />
+                <LabeledInput label="Email" type="email" value={eEmail} onChange={e => setEEmail(e.target.value)} required />
+                <LabeledInput label="Expertise" value={eExpertise} onChange={e => setEExpertise(e.target.value)} />
+                <LabeledSelect
+                  label="Assign Course"
+                  placeholder="Select course"
+                  value={eCourseId}
+                  onChange={setECourseId}
+                  options={courses.map(c => ({ value: c.id, label: c.title }))}
+                />
+                <input type="hidden" value={eRoleId} onChange={() => {}} />
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <button type="button" className="btn-secondary" onClick={() => setEditOpen(false)} disabled={saving}>Cancel</button>
+                <button type="submit" className="btn-primary p-2 rounded-lg" disabled={saving}>{saving ? 'Saving…' : 'Save Changes'}</button>
+              </div>
+            </form>
+          </Modal>
+        )}
+
+        {/* Delete confirm */}
+        {confirmId && (
+          <Modal title="Delete Instructor" onClose={() => !deleting && setConfirmId(null)}>
+            <p className="text-sm text-neutral-700">Are you sure you want to delete this instructor? This action cannot be undone.</p>
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button className="btn-secondary" onClick={() => setConfirmId(null)} disabled={deleting}>Cancel</button>
+              <button className="btn-primary p-2 rounded-lg bg-red-600 hover:bg-red-700" onClick={onDelete} disabled={deleting}>
+                {deleting ? 'Deleting…' : 'Delete'}
               </button>
             </div>
-          </form>
-        </Modal>
-      )}
+          </Modal>
+        )}
+      </div>
 
-      {/* Edit modal */}
-      {editOpen && editRow && (
-        <Modal title="Edit Instructor" onClose={() => !saving && setEditOpen(false)}>
-          <form onSubmit={onSave} className="space-y-4">
-            <div className="grid gap-4">
-              <LabeledInput label="Name" value={eName} onChange={e => setEName(e.target.value)} required />
-              <LabeledInput label="Email" type="email" value={eEmail} onChange={e => setEEmail(e.target.value)} required />
-              <LabeledInput label="Expertise" value={eExpertise} onChange={e => setEExpertise(e.target.value)} />
-              <LabeledSelect
-                label="Assign Course"
-                placeholder="Select course"
-                value={eCourseId}
-                onChange={setECourseId}
-                options={courses.map(c => ({ value: c.id, label: c.title }))}
-              />
-              <input type="hidden" value={eRoleId} onChange={() => {}} />
-            </div>
-            <div className="flex items-center justify-end gap-2">
-              <button type="button" className="btn-secondary" onClick={() => setEditOpen(false)} disabled={saving}>Cancel</button>
-              <button type="submit" className="btn-primary" disabled={saving}>{saving ? 'Saving…' : 'Save Changes'}</button>
-            </div>
-          </form>
-        </Modal>
-      )}
-
-      {/* Delete confirm */}
-      {confirmId && (
-        <Modal title="Delete Instructor" onClose={() => !deleting && setConfirmId(null)}>
-          <p className="text-sm text-neutral-700">Are you sure you want to delete this instructor? This action cannot be undone.</p>
-          <div className="mt-4 flex items-center justify-end gap-2">
-            <button className="btn-secondary" onClick={() => setConfirmId(null)} disabled={deleting}>Cancel</button>
-            <button className="btn-primary bg-red-600 hover:bg-red-700" onClick={onDelete} disabled={deleting}>
-              {deleting ? 'Deleting…' : 'Delete'}
-            </button>
-          </div>
-        </Modal>
-      )}
-    </div>
+      {/* Ultra loader overlay (same look) */}
+      <UltraLoader show={ultraBusy} label={ultraLabel} />
+    </>
   )
 }
 
@@ -420,30 +443,61 @@ function renderStatusBadge(s: ReturnType<typeof mapStatus>) {
   return <span className="inline-flex items-center rounded-full border border-neutral-300 bg-neutral-50 px-2 py-0.5 text-xs text-neutral-700">Unknown</span>
 }
 
-/* — modal & labeled controls — */
-function Modal({ title, subtext, onClose, children }: { title: string; subtext?: string; onClose: () => void; children: React.ReactNode }) {
-  return (
+/* — portal modal with full-viewport blurred backdrop — */
+function Modal({
+  title, subtext, onClose, children,
+}: { title: string; subtext?: string; onClose: () => void; children: React.ReactNode }) {
+  const el = useMemo(() => {
+    const d = document.createElement('div')
+    d.setAttribute('data-modal-root', 'true')
+    return d
+  }, [])
+
+  useEffect(() => {
+    document.body.appendChild(el)
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prev
+      try { document.body.removeChild(el) } catch {}
+    }
+  }, [el, onClose])
+
+  const node = (
     <>
-      <div className="fixed inset-0 z-50 bg-black/30" onClick={onClose} />
-      <div className="fixed inset-0 z-50 grid place-items-center px-4">
-        <div className="w-full max-w-xl rounded-2xl border border-neutral-200 bg-white shadow-xl">
+      {/* full viewport dark blur */}
+      <div className="fixed inset-0 z-[10000] h-screen w-screen bg-black/40 backdrop-blur-[2px]" onClick={onClose} aria-hidden="true" />
+      {/* centered dialog */}
+      <div className="fixed inset-0 z-[10001] grid place-items-center px-4" onClick={onClose}>
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="modal-title"
+          className="w-full max-w-xl rounded-2xl border border-neutral-200 bg-white shadow-xl"
+          onClick={(e) => e.stopPropagation()}
+        >
           <div className="flex items-start justify-between px-6 py-5 border-b border-neutral-200">
             <div>
-              <h3 className="text-lg font-semibold">{title}</h3>
+              <h3 id="modal-title" className="text-lg font-semibold">{title}</h3>
               {subtext && <p className="mt-1 text-sm text-neutral-600">{subtext}</p>}
             </div>
             <button className="rounded-md p-2 hover:bg-neutral-100" onClick={onClose} aria-label="Close">
               <X className="h-5 w-5" />
             </button>
           </div>
-          {/* allow dropdown to overflow */}
           <div className="px-6 py-5 overflow-visible">{children}</div>
         </div>
       </div>
     </>
   )
+
+  return createPortal(node, el)
 }
 
+/* — labeled inputs/selects — */
 function LabeledInput({
   label, type = 'text', placeholder, value, onChange, required,
 }: {
@@ -510,3 +564,27 @@ function LabeledSelect({
   )
 }
 
+/* — Ultra loader (shared look) — */
+function UltraLoader({ show, label = '' }: { show: boolean; label?: string }) {
+  if (!show) return null
+  return (
+    <div aria-busy="true" role="status" className="fixed inset-0 z-[9999] grid place-items-center bg-black/20 backdrop-blur-sm">
+      <div className="rounded-2xl border border-neutral-200 bg-white/90 px-6 py-5 shadow-2xl">
+        <div className="flex items-center gap-4">
+          <div className="relative h-10 w-10">
+            <span className="absolute inset-0 rounded-full border-4 border-neutral-200" />
+            <span className="absolute inset-0 rounded-full border-4 border-transparent border-t-[#0B5CD7] animate-spin" />
+          </div>
+          <div className="min-w-[180px]">
+            <div className="text-sm font-medium text-neutral-900">{label || 'Please wait…'}</div>
+            <div className="mt-2 flex items-center gap-1">
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#0B5CD7] [animation-delay:-.2s]" />
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#0B5CD7] [animation-delay:-.1s]" />
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#0B5CD7]" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

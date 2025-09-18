@@ -1,0 +1,11 @@
+# Normalize all text files to LF in the repo
+* text=auto eol=lf
+
+# Scripts should always be LF
+*.sh  text eol=lf
+*.bash text eol=lf
+
+# (Optional) Keep Windows script files CRLF on checkout
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

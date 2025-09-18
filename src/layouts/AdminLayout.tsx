@@ -66,7 +66,7 @@ export default function AdminLayout() {
     { to: '/admin/courses', label: 'Courses', icon: BookOpen, countKey: 'courses' },
     { to: '/admin/students', label: 'Students', icon: Users, countKey: 'students' },
     { to: '/admin/instructors', label: 'Instructors', icon: UserCog, countKey: 'instructors' },
-    { to: '/admin/interns', label: 'Interns', icon: UserSquare2, countKey: 'interns' },
+    // { to: '/admin/interns', label: 'Interns', icon: UserSquare2, countKey: 'interns' },
     { to: '/admin/settings', label: 'Settings', icon: Settings },
   ]
 

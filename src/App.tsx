@@ -1,7 +1,7 @@
 // src/App.tsx
 import { Routes, Route, Navigate, Outlet } from 'react-router-dom'
 import Login from './pages/Login'
-import { ForgotPassword } from './pages/ForgotPassword'
+import ForgotPassword from './pages/ForgotPassword'
 import AdminLayout from './layouts/AdminLayout'
 import { AdminDashboard } from './pages/admin/AdminDashboard'
 import Courses from './pages/admin/Courses'
@@ -14,6 +14,7 @@ import { ProtectedRoute } from './auth/ProtectedRoute'
 import { RoleGate } from './auth/RoleGate'
 import { useAuth } from './auth/AuthContext'
 import Interns from './pages/admin/Interns'
+import ResetPassword from './pages/ResetPassword'
 
 export default function App() {
   return (
@@ -23,6 +24,8 @@ export default function App() {
         <Route path="/" element={<Navigate to="/login" />} />
         <Route path="/login" element={<Login />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
+
       </Route>
 
       {/* Private app */}
