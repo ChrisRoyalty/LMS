@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "build": "vite build",
+    "typecheck": "node node_modules/typescript/bin/tsc --noEmit",
+    "preview": "vite preview --port 4173"
   },
   "dependencies": {
     "axios": "^1.7.2",
@@ -26,5 +27,6 @@
     "tailwindcss": "^3.4.10",
     "typescript": "^5.9.2",
     "vite": "^5.4.20"
-  }
+  },
+  "engines": { "node": ">=18 <21" }
 }
