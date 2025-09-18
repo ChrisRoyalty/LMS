@@ -149,7 +149,7 @@ export default function Login() {
   return (
     <div className="max-w-md mx-auto">
       {/* Brand */}
-      <div className="flex flex-col items-center mb-6">
+      <div className="flex flex-col items-center mb-6 mt-8">
         <Brand />
         <h1 className="mt-3 text-2xl font-semibold text-neutral-900">RAD5 Academy</h1>
         <p className="text-neutral-500">Learning Management System</p>
