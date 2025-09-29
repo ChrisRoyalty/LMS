@@ -73,7 +73,7 @@ export default function Login() {
 
   return (
     <>
-      <div className="max-w-md mx-auto">
+      <div className="max-w-md max-sm:mx-4 mx-auto ">
         {/* Brand */}
         <div className="flex flex-col items-center mb-6 mt-8">
           <Brand />

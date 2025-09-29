@@ -4,12 +4,20 @@ import { Button } from '../components/ui/Button'
 import { Input } from '../components/ui/Input'
 import { showToast } from '../lib/toast'
 import { api } from '../lib/api'
+import { LuGraduationCap } from 'react-icons/lu'
 
 export default function ForgotPassword() {
   const [email, setEmail] = useState('')
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState(false)
 
+function Brand() {
+  return (
+    <div className="h-16 w-16 rounded-full bg-[#0B5CD7] grid place-items-center">
+      <LuGraduationCap className="h-10 w-8 text-white" />
+    </div>
+  )
+}
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
     if (!email.trim()) return
@@ -28,7 +36,12 @@ export default function ForgotPassword() {
 
   return (
     <>
-      <div className="max-w-md mx-auto h-screen flex items-center">
+      <div className="max-w-md max-sm:mx-4 mx-auto h-screen flex flex-col items-center">
+         <div className="flex flex-col items-center mb-6 mt-8">
+          <Brand />
+          <h1 className="mt-3 text-2xl font-semibold text-neutral-900">RAD5 Academy</h1>
+          <p className="text-neutral-500">Learning Management System</p>
+        </div>
         <div className="card bg-white">
           <div className="card-header">
             <h2 className="text-lg font-semibold">Forgot Password</h2>
