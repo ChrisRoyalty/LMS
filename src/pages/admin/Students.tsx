@@ -433,7 +433,7 @@ export default function Students() {
           <p className="text-sm text-neutral-700">Are you sure you want to delete this student? This action cannot be undone.</p>
           <div className="mt-4 flex items-center justify-end gap-2">
             <button className="btn-secondary" onClick={() => setConfirmId(null)} disabled={deleting}>Cancel</button>
-            <button className="btn-primary rounded p-2 bg-red-600 hover:bg-red-700" onClick={onDelete} disabled={deleting}>
+            <button className="text-white rounded p-2 bg-red-600 hover:bg-red-700" onClick={onDelete} disabled={deleting}>
               {deleting ? 'Deleting…' : 'Delete'}
             </button>
           </div>

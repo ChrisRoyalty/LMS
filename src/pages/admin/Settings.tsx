@@ -34,7 +34,7 @@ function readAuthUser(): AuthUser | null {
 }
 
 export default function Settings() {
-  /* — profile form — */
+  /* — profile form — (inline simple fields are fine here) */
   const [firstName, setFirstName] = useState('Admin')
   const [lastName, setLastName] = useState('User')
   const [email, setEmail] = useState('admin@rad5academy.com')
@@ -49,20 +49,18 @@ export default function Settings() {
   /* — roles/batches/admin — */
   const [roles, setRoles] = useState<Role[]>([])
   const [rolesLoading, setRolesLoading] = useState(true)
-  const [roleModal, setRoleModal] = useState(false)
-  const [roleName, setRoleName] = useState('')
-  const [roleSaving, setRoleSaving] = useState(false)
 
   const [batches, setBatches] = useState<Batch[]>([])
   const [batchesLoading, setBatchesLoading] = useState(true)
-  const [batchModal, setBatchModal] = useState(false)
-  const [batchName, setBatchName] = useState('')
-  const [batchSaving, setBatchSaving] = useState(false)
 
+  // modal toggles only (no typing state here)
+  const [roleModal, setRoleModal] = useState(false)
+  const [batchModal, setBatchModal] = useState(false)
   const [adminModal, setAdminModal] = useState(false)
-  const [adminFullName, setAdminFullName] = useState('')
-  const [adminEmail, setAdminEmail] = useState('')
-  const [adminRoleId, setAdminRoleId] = useState<string>('')
+
+  // these are only for network flags (not typing)
+  const [roleSaving, setRoleSaving] = useState(false)
+  const [batchSaving, setBatchSaving] = useState(false)
   const [adminSaving, setAdminSaving] = useState(false)
 
   /* — resolve logged-in user & prefill — */
@@ -74,8 +72,7 @@ export default function Settings() {
       const parts = sessionUser.fullName.split(' ')
       const fn = parts.length > 1 ? parts.slice(0, -1).join(' ') : parts[0]
       const ln = parts.length > 1 ? parts.slice(-1).join(' ') : ''
-      setFirstName(fn || firstName)
-      setLastName(ln || lastName)
+      setFirstName(fn || ''); setLastName(ln || '')
     }
     if (sessionUser?.email) setEmail(sessionUser.email)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -87,11 +84,7 @@ export default function Settings() {
     setRolesLoading(true)
     try {
       const { data } = await api.get('/api/admin/roles')
-      const list: Role[] = Array.isArray(data) ? data : []
-      setRoles(list)
-      // preselect admin for Create Admin form
-      const admin = list.find(r => (r.name || '').toLowerCase() === 'admin')
-      if (admin && !adminRoleId) setAdminRoleId(admin.id)
+      setRoles(Array.isArray(data) ? data : [])
     } catch (e: any) {
       showToast({ kind: 'error', title: 'Could not load roles', message: e?.response?.data?.message || 'Please try again.' })
     } finally { setRolesLoading(false) }
@@ -152,68 +145,6 @@ export default function Settings() {
       showToast({ kind: 'error', title: 'Change failed', message: e?.response?.data?.message || 'Please try again.' })
     } finally { setChanging(false) }
   }
-
-  /* — create role — */
-  async function handleCreateRole(e: React.FormEvent) {
-    e.preventDefault()
-    if (!roleName.trim()) return
-    setRoleSaving(true)
-    try {
-      await api.post('/api/admin/create-roles', { name: roleName.trim().toLowerCase() })
-      showToast({ kind: 'success', title: 'Role created', message: roleName })
-      setRoleName(''); setRoleModal(false); await loadRoles()
-    } catch (e: any) {
-      showToast({ kind: 'error', title: 'Create role failed', message: e?.response?.data?.message || 'Please try again.' })
-    } finally { setRoleSaving(false) }
-  }
-
-  /* — create batch — */
-  async function handleCreateBatch(e: React.FormEvent) {
-    e.preventDefault()
-    if (!batchName.trim()) return
-    setBatchSaving(true)
-    try {
-      try { await api.post('/admin/create-batch', { name: batchName.trim() }) }
-      catch (err: any) {
-        if (err?.response?.status === 404) await api.post('/api/admin/create-batch', { name: batchName.trim() })
-        else throw err
-      }
-      showToast({ kind: 'success', title: 'Batch created', message: batchName })
-      setBatchName(''); setBatchModal(false); await loadBatches()
-    } catch (e: any) {
-      showToast({ kind: 'error', title: 'Create batch failed', message: e?.response?.data?.message || 'Please try again.' })
-    } finally { setBatchSaving(false) }
-  }
-
-  /* — create admin — */
-  async function handleCreateAdmin(e: React.FormEvent) {
-    e.preventDefault()
-    if (!adminFullName.trim() || !adminEmail.trim() || !adminRoleId) {
-      showToast({ kind: 'warning', title: 'Missing fields', message: 'Provide name, email and role.' }); return
-    }
-    setAdminSaving(true)
-    try {
-      await api.post('/api/user/register-user', {
-        fullName: adminFullName.trim(),
-        email: adminEmail.trim(),
-        roleId: adminRoleId,
-      })
-      showToast({ kind: 'success', title: 'Admin created', message: adminFullName })
-      setAdminFullName(''); setAdminEmail(''); setAdminModal(false)
-    } catch (e: any) {
-      showToast({ kind: 'error', title: 'Create admin failed', message: e?.response?.data?.message || 'Please try again.' })
-    } finally { setAdminSaving(false) }
-  }
-
-  /* — lock scroll when any modal is open — */
-  const anyModalOpen = roleModal || batchModal || adminModal
-  useEffect(() => {
-    if (anyModalOpen) {
-      const prev = document.body.style.overflow
-      document.body.style.overflow = 'hidden'
-      return () => { document.body.style.overflow = prev }
-    }
-  }, [anyModalOpen])
 
   /* — ultra loader label — */
   const ultraBusy = changing || roleSaving || batchSaving || adminSaving || rolesLoading || batchesLoading
@@ -359,64 +290,73 @@ export default function Settings() {
           </CardContent>
         </Card>
 
-        {/* Modals */}
+        {/* Modals — local typing state INSIDE each modal */}
         {roleModal && (
-          <Modal onClose={() => !roleSaving && setRoleModal(false)} title="Create Role">
-            <form onSubmit={handleCreateRole} className="space-y-4">
-              <div>
-                <label className="label">Role name</label>
-                <Input placeholder="e.g., instructor" value={roleName} onChange={(e) => setRoleName(e.target.value)} required />
-              </div>
-              <div className="flex items-center justify-end gap-2">
-                <button type="button" className="btn-secondary" onClick={() => setRoleModal(false)} disabled={roleSaving}>Cancel</button>
-                <button type="submit" className="btn-primary rounded-lg p-2" disabled={roleSaving}>{roleSaving ? 'Creating…' : 'Create Role'}</button>
-              </div>
-            </form>
-          </Modal>
+          <CreateRoleModal
+            onClose={() => !roleSaving && setRoleModal(false)}
+            onSubmit={async (name) => {
+              setRoleSaving(true)
+              try {
+                await api.post('/api/admin/create-roles', { name: name.trim().toLowerCase() })
+                showToast({ kind: 'success', title: 'Role created', message: name })
+                setRoleModal(false)
+                await loadRoles()
+              } catch (e: any) {
+                showToast({ kind: 'error', title: 'Create role failed', message: e?.response?.data?.message || 'Please try again.' })
+              } finally { setRoleSaving(false) }
+            }}
+            working={roleSaving}
+          />
         )}
 
         {batchModal && (
-          <Modal onClose={() => !batchSaving && setBatchModal(false)} title="Create Batch">
-            <form onSubmit={handleCreateBatch} className="space-y-4">
-              <div>
-                <label className="label">Batch name</label>
-                <Input placeholder="e.g., Batch A 2025" value={batchName} onChange={(e) => setBatchName(e.target.value)} required />
-              </div>
-              <div className="flex items-center justify-end gap-2">
-                <button type="button" className="btn-secondary" onClick={() => setBatchModal(false)} disabled={batchSaving}>Cancel</button>
-                <button type="submit" className="btn-primary rounded-lg p-2" disabled={batchSaving}>{batchSaving ? 'Creating…' : 'Create Batch'}</button>
-              </div>
-            </form>
-          </Modal>
+          <CreateBatchModal
+            onClose={() => !batchSaving && setBatchModal(false)}
+            onSubmit={async (name) => {
+              setBatchSaving(true)
+              try {
+                try { await api.post('/admin/create-batch', { name: name.trim() }) }
+                catch (err: any) {
+                  if (err?.response?.status === 404) await api.post('/api/admin/create-batch', { name: name.trim() })
+                  else throw err
+                }
+                showToast({ kind: 'success', title: 'Batch created', message: name })
+                setBatchModal(false)
+                await loadBatches()
+              } catch (e: any) {
+                showToast({ kind: 'error', title: 'Create batch failed', message: e?.response?.data?.message || 'Please try again.' })
+              } finally { setBatchSaving(false) }
+            }}
+            working={batchSaving}
+          />
         )}
 
-        {adminModal && (
-          <Modal onClose={() => !adminSaving && setAdminModal(false)} title="Create Admin">
-            <form onSubmit={handleCreateAdmin} className="space-y-4">
-              <div>
-                <label className="label">Full name</label>
-                <Input placeholder="e.g., Prince Bassey" value={adminFullName} onChange={(e) => setAdminFullName(e.target.value)} required />
-              </div>
-              <div>
-                <label className="label">Email</label>
-                <Input type="email" placeholder="admin@example.com" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} required />
-              </div>
-              <div>
-                <label className="label">Role</label>
-                <select className="input" value={adminRoleId} onChange={(e) => setAdminRoleId(e.target.value)} required>
-                  <option value="" disabled>Select role</option>
-                  {roles.map(r => (
-                    <option key={r.id} value={r.id}>{titleCase(r.name)}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex items-center justify-end gap-2">
-                <button type="button" className="btn-secondary" onClick={() => setAdminModal(false)} disabled={adminSaving}>Cancel</button>
-                <button type="submit" className="btn-primary rounded-lg p-2" disabled={adminSaving}>{adminSaving ? 'Creating…' : 'Create Admin'}</button>
-              </div>
-            </form>
-          </Modal>
-        )}
+{adminModal && (
+  <CreateAdminModal
+    roles={[{ id: adminRoleIdResolved, name: 'admin' }]}   // <- only Admin
+    defaultRoleId={adminRoleIdResolved}                    // <- preselected
+    onClose={() => !adminSaving && setAdminModal(false)}
+    working={adminSaving}
+    onSubmit={async ({ fullName, email, roleId }) => {
+      setAdminSaving(true)
+      try {
+        await api.post('/api/user/register-user', { fullName, email, roleId })
+        showToast({ kind: 'success', title: 'Admin created', message: fullName })
+        setAdminModal(false)
+      } catch (e: any) {
+        showToast({
+          kind: 'error',
+          title: 'Create admin failed',
+          message: e?.response?.data?.message || 'Please try again.',
+        })
+      } finally {
+        setAdminSaving(false)
+      }
+    }}
+  />
+)}
+
+
       </div>
 
       {/* Ultra loader (shared look) */}
@@ -425,7 +365,115 @@ export default function Settings() {
   )
 }
 
-/* — Modal (portal; full-viewport blurred backdrop) — */
+/* ===================== Modal components (with local state) ===================== */
+
+function CreateRoleModal({
+  onClose, onSubmit, working,
+}: {
+  onClose: () => void
+  onSubmit: (name: string) => void
+  working: boolean
+}) {
+  const [roleName, setRoleName] = useState('')
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!roleName.trim()) return
+    onSubmit(roleName)
+  }
+  return (
+    <Modal onClose={onClose} title="Create Role">
+      <form onSubmit={submit} className="space-y-4">
+        <div>
+          <label className="label">Role name</label>
+          <Input placeholder="e.g., instructor" value={roleName} onChange={(e) => setRoleName(e.target.value)} required />
+        </div>
+        <div className="flex items-center justify-end gap-2">
+          <button type="button" className="btn-secondary" onClick={onClose} disabled={working}>Cancel</button>
+          <button type="submit" className="btn-primary rounded-lg p-2" disabled={working}>{working ? 'Creating…' : 'Create Role'}</button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+function CreateBatchModal({
+  onClose, onSubmit, working,
+}: {
+  onClose: () => void
+  onSubmit: (name: string) => void
+  working: boolean
+}) {
+  const [batchName, setBatchName] = useState('')
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!batchName.trim()) return
+    onSubmit(batchName)
+  }
+  return (
+    <Modal onClose={onClose} title="Create Batch">
+      <form onSubmit={submit} className="space-y-4">
+        <div>
+          <label className="label">Batch name</label>
+          <Input placeholder="e.g., Batch A 2025" value={batchName} onChange={(e) => setBatchName(e.target.value)} required />
+        </div>
+        <div className="flex items-center justify-end gap-2">
+          <button type="button" className="btn-secondary" onClick={onClose} disabled={working}>Cancel</button>
+          <button type="submit" className="btn-primary rounded-lg p-2" disabled={working}>{working ? 'Creating…' : 'Create Batch'}</button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+function CreateAdminModal({
+  roles, defaultRoleId, onClose, onSubmit, working,
+}: {
+  roles: Role[]
+  defaultRoleId?: string
+  onClose: () => void
+  onSubmit: (p: { fullName: string; email: string; roleId: string }) => void
+  working: boolean
+}) {
+  const [adminFullName, setAdminFullName] = useState('')
+  const [adminEmail, setAdminEmail] = useState('')
+  const [adminRoleId, setAdminRoleId] = useState<string>(defaultRoleId || '')
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!adminFullName.trim() || !adminEmail.trim() || !adminRoleId) return
+    onSubmit({ fullName: adminFullName.trim(), email: adminEmail.trim(), roleId: adminRoleId })
+  }
+
+  return (
+    <Modal onClose={onClose} title="Create Admin">
+      <form onSubmit={submit} className="space-y-4">
+        <div>
+          <label className="label">Full name</label>
+          <Input placeholder="e.g., Prince Bassey" value={adminFullName} onChange={(e) => setAdminFullName(e.target.value)} required />
+        </div>
+        <div>
+          <label className="label">Email</label>
+          <Input type="email" placeholder="admin@example.com" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} required />
+        </div>
+        <div>
+          <label className="label">Role</label>
+          <select className="input" value={adminRoleId} onChange={(e) => setAdminRoleId(e.target.value)} required>
+            <option value="" disabled>Select role</option>
+            {roles.map(r => (
+              <option key={r.id} value={r.id}>{titleCase(r.name)}</option>
+            ))}
+          </select>
+        </div>
+        <div className="flex items-center justify-end gap-2">
+          <button type="button" className="btn-secondary" onClick={onClose} disabled={working}>Cancel</button>
+          <button type="submit" className="btn-primary rounded-lg p-2" disabled={working}>{working ? 'Creating…' : 'Create Admin'}</button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+/* ===================== Portal Modal (locks scroll + blur) ===================== */
 function Modal({ onClose, title, children }: { onClose: () => void; title: string; children: React.ReactNode }) {
   const el = useMemo(() => {
     const d = document.createElement('div')
@@ -479,7 +527,7 @@ function UltraLoader({ show, label = '' }: { show: boolean; label?: string }) {
         <div className="flex items-center gap-4">
           <div className="relative h-10 w-10">
             <span className="absolute inset-0 rounded-full border-4 border-neutral-200" />
-            <span className="absolute inset-0 rounded-full border-4 border-transparent border-top-[#0B5CD7]" />
+            {/* top spinner */}
             <span className="absolute inset-0 rounded-full border-4 border-transparent border-t-[#0B5CD7] animate-spin" />
           </div>
           <div className="min-w-[180px]">

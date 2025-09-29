@@ -20,11 +20,18 @@ import InstructorAssignments from './pages/instructor/InstructorAssignments'
 import InstructorAnalytics from './pages/instructor/InstructorAnalytics'
 import InstructorAnnouncements from './pages/instructor/InstructorAnnouncements'
 
-import { StudentDashboard } from './pages/student/StudentDashboard'
+/* ——— NEW: Student layout & pages ——— */
+import StudentLayout from './layouts/StudentLayout'
+import StudentDashboard from './pages/student/StudentDashboard'
+import StudentAnnouncements from './pages/student/StudentAnnouncements'
+import StudentAssignments from './pages/student/StudentAssignment'
+import StudentCourses from './pages/student/StudentCourses'
+// If you add a StudentAnalytics page later, just import and plug in.
 
 import { ProtectedRoute } from './auth/ProtectedRoute'
 import { RoleGate } from './auth/RoleGate'
 import { useAuth } from './auth/AuthContext'
+import StudentGrades from './pages/student/StudentGrades'
 
 export default function App() {
   return (
@@ -60,31 +67,38 @@ export default function App() {
         </Route>
 
         {/* Instructor area WITH persistent sidebar/layout */}
-        {/* // inside <Route element={<ProtectedRoute />}> */}
+        <Route
+          path="/instructor/*"
+          element={
+            <RoleGate roles={['INSTRUCTOR']}>
+              <InstructorLayout />
+            </RoleGate>
+          }
+        >
+          <Route index element={<InstructorDashboard />} />
+          <Route path="students" element={<InstructorStudents />} />
+          <Route path="assignments" element={<InstructorAssignments />} />
+          <Route path="analytics" element={<InstructorAnalytics />} />
+          <Route path="announcements" element={<InstructorAnnouncements />} />
+        </Route>
+
+        {/* NEW: Student area WITH persistent sidebar/layout */}
+   
 <Route
-  path="/instructor/*"
+  path="/student/*"
   element={
-    <RoleGate roles={['INSTRUCTOR']}>
-      <InstructorLayout />
+    <RoleGate roles={['STUDENT']}>
+      <StudentLayout />
     </RoleGate>
   }
 >
-  <Route index element={<InstructorDashboard />} />
-  <Route path="students" element={<InstructorStudents />} />
-  <Route path="assignments" element={<InstructorAssignments />} />
-  <Route path="analytics" element={<InstructorAnalytics />} />
-  <Route path="announcements" element={<InstructorAnnouncements />} />
+  <Route index element={<StudentDashboard />} />
+  <Route path="courses" element={<StudentCourses />} />
+  <Route path="assignments" element={<StudentAssignments />} />
+  <Route path="grades" element={<StudentGrades />} />
+  <Route path="announcements" element={<StudentAnnouncements />} />
 </Route>
 
-        {/* Student single-page dashboard (no student layout yet) */}
-        <Route
-          path="/student"
-          element={
-            <RoleGate roles={['STUDENT']}>
-              <StudentDashboard />
-            </RoleGate>
-          }
-        />
 
         {/* Generic role-based landing */}
         <Route path="/dashboard" element={<DashboardChooser />} />

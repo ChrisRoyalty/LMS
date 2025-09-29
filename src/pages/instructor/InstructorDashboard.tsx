@@ -1,10 +1,83 @@
 // src/pages/instructor/InstructorDashboard.tsx
-import { UltraLoader } from './_shared/UltraLoader'
+import * as React from 'react'
+import { UltraLoader } from './_shared/UltraLoader' // same modern loader used on Admin → Courses
 import { BookOpen, Users, ClipboardList, Gauge } from 'lucide-react'
 
+type DashboardApi = {
+  totalStudents: number
+  totalPendingReviews: number
+  classAverage: number | null
+  curriculum: Array<{
+    courseId: string
+    courseName: string
+    studentsCount: number
+    avgProgress: number
+    nextDeadline?: string | null
+  }>
+  recentActivity: Array<{
+    message: string
+    timeAgo: string
+  }>
+}
+
 export function InstructorDashboard() {
-  // static snapshot UI (no API calls yet)
-  const loading = false
+  const [loading, setLoading] = React.useState(true)
+  const [working, setWorking] = React.useState(false) // reserved for future actions to trigger the same overlay
+  const [data, setData] = React.useState<DashboardApi | null>(null)
+  const [error, setError] = React.useState<string | null>(null)
+
+  React.useEffect(() => {
+    void load()
+  }, [])
+
+  async function load() {
+    const controller = new AbortController()
+    try {
+      setLoading(true)
+      setError(null)
+
+      const base = import.meta.env.VITE_API_BASE_URL as string
+      if (!base) throw new Error('VITE_API_BASE_URL is not set')
+
+      const token =
+        localStorage.getItem('access_token') ||
+        localStorage.getItem('token') ||
+        sessionStorage.getItem('access_token') ||
+        ''
+
+      const res = await fetch(`${base}/api/instructor/instructor-dashboard`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        signal: controller.signal,
+      })
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        throw new Error(text || `Request failed with ${res.status}`)
+      }
+
+      const json = (await res.json()) as DashboardApi
+      setData(json)
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') setError(e?.message || 'Failed to load dashboard')
+    } finally {
+      setLoading(false)
+    }
+    return () => controller.abort()
+  }
+
+  const ultraBusy = loading || working
+  const ultraLabel =
+    loading ? 'Loading dashboard…'
+    : working ? 'Syncing…'
+    : ''
+
+  const activeCourses = data?.curriculum?.length ?? 0
+  const totalStudents = data?.totalStudents ?? 0
+  const pendingReviews = data?.totalPendingReviews ?? 0
 
   return (
     <>
@@ -13,25 +86,29 @@ export function InstructorDashboard() {
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard
             title="Active Courses"
-            value={<Num n={2} className="text-[#0B5CD7]" />}
+            value={<Num n={activeCourses} className="text-[#0B5CD7]" />}
             caption="Teaching actively"
             Icon={BookOpen}
           />
           <StatCard
             title="Total Students"
-            value={<Num n={4} className="text-[#0FA958]" />}
+            value={<Num n={totalStudents} className="text-[#0FA958]" />}
             caption="Across all courses"
             Icon={Users}
           />
           <StatCard
             title="Pending Reviews"
-            value={<Num n={12} className="text-[#E79E2B]" />}
+            value={<Num n={pendingReviews} className="text-[#E79E2B]" />}
             caption="Assignments to grade"
             Icon={ClipboardList}
           />
           <StatCard
             title="Average Score"
-            value={<span className="text-[28px] font-semibold text-[#0FA5B4]">B+</span>}
+            value={
+              <span className="text-[28px] font-semibold text-[#0FA5B4]">
+                {formatAverage(data?.classAverage)}
+              </span>
+            }
             caption="Class average"
             Icon={Gauge}
           />
@@ -46,21 +123,21 @@ export function InstructorDashboard() {
               <div className="text-sm text-neutral-500 -mt-0.5">Your assigned courses and progress</div>
             </div>
 
-            <CourseRow
-              title="React Fundamentals"
-              percent={68}
-              students="25 students"
-              nextDeadline="2024-08-20"
-            />
-
-            <div className="mt-6" />
-
-            <CourseRow
-              title="Advanced JavaScript"
-              percent={45}
-              students="18 students"
-              nextDeadline="2024-08-25"
-            />
+            {data?.curriculum?.length ? (
+              <div className="space-y-6">
+                {data.curriculum.map((c) => (
+                  <CourseRow
+                    key={c.courseId}
+                    title={c.courseName}
+                    percent={clampPercent(c.avgProgress)}
+                    students={`${c.studentsCount} ${c.studentsCount === 1 ? 'student' : 'students'}`}
+                    nextDeadline={c.nextDeadline ?? '—'}
+                  />
+                ))}
+              </div>
+            ) : (
+              <EmptyHint text={loading ? 'Loading…' : 'No assigned courses yet.'} />
+            )}
           </div>
 
           {/* Recent Activity */}
@@ -70,29 +147,32 @@ export function InstructorDashboard() {
               <div className="text-sm text-neutral-500 -mt-0.5">Latest student submissions and activities</div>
             </div>
 
-            <ul className="space-y-5">
-              <Activity
-                kind="ok"
-                title="Alice Cooper submitted assignment"
-                meta="React Component Design · 2 hours ago"
-              />
-              <Activity
-                kind="warn"
-                title="Charlie Brown missed deadline"
-                meta="JavaScript ES6 Quiz · 1 day ago"
-              />
-              <Activity
-                kind="ok"
-                title="Bob Wilson submitted project"
-                meta="State Management Project · 3 hours ago"
-              />
-            </ul>
+            {data?.recentActivity?.length ? (
+              <ul className="space-y-5">
+                {data.recentActivity.map((a, i) => (
+                  <Activity
+                    key={i}
+                    kind={a.message.toLowerCase().includes('missed deadline') ? 'warn' : 'ok'}
+                    title={a.message}
+                    meta={a.timeAgo}
+                  />
+                ))}
+              </ul>
+            ) : (
+              <EmptyHint text={loading ? 'Loading…' : 'No recent activity to show.'} />
+            )}
           </div>
         </div>
+
+        {error && (
+          <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            {error}
+          </div>
+        )}
       </div>
 
-      {/* same loader shell for consistency — stays hidden here */}
-      <UltraLoader show={loading} label="Loading dashboard…" />
+      {/* Same ultramodern overlay used elsewhere */}
+      <UltraLoader show={ultraBusy} label={ultraLabel} />
     </>
   )
 }
@@ -122,7 +202,7 @@ function Num({ n, className }: { n: number; className?: string }) {
 
 function CourseRow({
   title, percent, students, nextDeadline,
-}: { title: string; percent: number; students: string; nextDeadline: string }) {
+}: { title: string; percent: number; students: string; nextDeadline: string | number }) {
   return (
     <div>
       <div className="flex items-center justify-between">
@@ -149,11 +229,7 @@ function CourseRow({
 }
 
 function Activity({ kind, title, meta }: { kind: 'ok' | 'warn'; title: string; meta: string }) {
-  const dot =
-    kind === 'ok'
-      ? 'bg-green-600'
-      : 'bg-amber-500'
-
+  const dot = kind === 'ok' ? 'bg-green-600' : 'bg-amber-500'
   return (
     <li className="flex items-start justify-between">
       <div className="flex items-start gap-3">
@@ -165,6 +241,35 @@ function Activity({ kind, title, meta }: { kind: 'ok' | 'warn'; title: string; m
       </div>
     </li>
   )
+}
+
+function EmptyHint({ text }: { text: string }) {
+  return (
+    <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-4 text-sm text-neutral-600">
+      {text}
+    </div>
+  )
+}
+
+/* ————— helpers ————— */
+
+function clampPercent(n: number | null | undefined) {
+  if (typeof n !== 'number' || Number.isNaN(n)) return 0
+  return Math.max(0, Math.min(100, Math.round(n)))
+}
+
+function formatAverage(avg: number | null | undefined) {
+  if (avg == null) return '—'
+  const n = clampPercent(avg)
+  if (n >= 90) return 'A'
+  if (n >= 85) return 'A-'
+  if (n >= 80) return 'B+'
+  if (n >= 75) return 'B'
+  if (n >= 70) return 'B-'
+  if (n >= 65) return 'C+'
+  if (n >= 60) return 'C'
+  if (n >= 50) return 'D'
+  return 'F'
 }
 
 export default InstructorDashboard

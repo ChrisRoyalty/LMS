@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Plus, Search, Eye, SquarePen, Trash2, Check, ChevronDown, X } from 'lucide-react'
+import React, { useEffect, useMemo, useState, memo, useCallback } from 'react'
+import { Plus, Search, SquarePen, Check, ChevronDown, X, Trash2 } from 'lucide-react'
 import { api } from '../../lib/api'
 import { showToast } from '../../lib/toast'
 import { createPortal } from 'react-dom'
@@ -17,30 +17,19 @@ type Assignment = {
   status?: 'Active' | 'Completed' | 'Draft'
   submissions?: number
 }
-type Submission = {
-  id: string
-  assignmentId: string
-  studentId: string
-  submissionLink: string
-  status: 'PENDING' | 'GRADED'
-  score?: number
-  feedback?: string
-}
 
 export default function InstructorAssignments() {
-  // data
   const [courses, setCourses] = useState<Course[]>([])
   const [rows, setRows] = useState<Assignment[]>([])
   const [query, setQuery] = useState('')
 
-  // modals
   const [createOpen, setCreateOpen] = useState(false)
-  const [gradeOpen, setGradeOpen] = useState(false)
-  const [submitOpen, setSubmitOpen] = useState(false)
+  const [editOpen, setEditOpen] = useState(false)
 
-  // working flags
-  const [loading, setLoading] = useState(true)
+  // IMPORTANT: split flags — listLoading never blocks inputs; working only during mutations
+  const [listLoading, setListLoading] = useState(true)
   const [working, setWorking] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   // create form
   const [cTitle, setCTitle] = useState('')
@@ -50,44 +39,60 @@ export default function InstructorAssignments() {
   const [cDesc, setCDesc] = useState('')
   const [cMax, setCMax] = useState<number | ''>('')
 
-  // submit form (demo/test)
-  const [sAssignmentId, setSAssignmentId] = useState('')
-  const [sLink, setSLink] = useState('')
+  // edit form
+  const [eId, setEId] = useState<string>('')
+  const [eTitle, setETitle] = useState('')
+  const [eCourseId, setECourseId] = useState('')
+  const [eType, setEType] = useState<'ASSIGNMENT' | 'QUIZ' | 'PROJECT' | 'CAPSTONE' | ''>('')
+  const [eDeadline, setEDeadline] = useState('')
+  const [eDesc, setEDesc] = useState('')
+  const [eMax, setEMax] = useState<number | ''>('')
 
-  // grade form
-  const [gSubmissionId, setGSubmissionId] = useState('')
-  const [gScore, setGScore] = useState<number | ''>('')
-  const [gFeedback, setGFeedback] = useState('')
+  function authHeaders() {
+    const token =
+      localStorage.getItem('access_token') ||
+      localStorage.getItem('token') ||
+      sessionStorage.getItem('access_token') ||
+      ''
+    return token ? { Authorization: `Bearer ${token}` } : {}
+  }
 
-  // load courses; (no list endpoint provided for assignments — we’ll keep a local list & append created items)
   useEffect(() => {
-    setLoading(true)
-    api.get('/api/courses/all-courses')
+    setListLoading(true)
+    api
+      .get('/api/courses/all-courses', { headers: { ...authHeaders() } })
       .then(({ data }) => {
         const list: Course[] = Array.isArray(data) ? data.map((c: any) => ({ id: c.id, title: c.title })) : []
         setCourses(list)
       })
       .catch((e) => {
-        showToast({ kind: 'error', title: 'Could not load courses', message: e?.response?.data?.message || 'Please try again.' })
+        const msg = e?.response?.status === 403 ? 'Forbidden: insufficient role' : e?.response?.data?.message || 'Please try again.'
+        showToast({ kind: 'error', title: 'Could not load courses', message: msg })
       })
-      .finally(() => setLoading(false))
+      .finally(() => setListLoading(false))
   }, [])
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return rows
-    return rows.filter(r =>
-      [r.title, r.courseTitle, r.assignmentType, r.deadline].filter(Boolean)
-        .some(v => String(v).toLowerCase().includes(q))
-    )
-  }, [rows, query])
+  // Memoize filtered *inside* the table section to avoid recompute during modal typing.
+  // Here we just keep rows & query in parent.
 
-  /* ------------ create assignment ------------ */
-  const openCreate = () => {
+  /* ------------ Handlers (useCallback to keep stable identities) ------------ */
+  const openCreate = useCallback(() => {
     setCTitle(''); setCCourseId(''); setCType(''); setCDeadline(''); setCDesc(''); setCMax('')
     setCreateOpen(true)
-  }
-  async function onCreate(e: React.FormEvent) {
+  }, [])
+
+  const openEdit = useCallback((a: Assignment) => {
+    setEId(a.id)
+    setETitle(a.title)
+    setECourseId(a.courseId)
+    setEType(((a.assignmentType as any) || '').toUpperCase() as any)
+    setEDeadline(a.deadline ? toDateOnly(a.deadline) : '')
+    setEDesc(a.description || '')
+    setEMax(typeof a.maxScore === 'number' ? a.maxScore : '')
+    setEditOpen(true)
+  }, [])
+
+  const onCreate = useCallback(async (e: React.FormEvent) => {
     e.preventDefault()
     if (!cTitle || !cCourseId || !cType || !cDeadline) {
       showToast({ kind: 'warning', title: 'Missing fields', message: 'Please fill title, course, type and due date.' })
@@ -99,23 +104,23 @@ export default function InstructorAssignments() {
         title: cTitle,
         description: cDesc || undefined,
         courseId: cCourseId,
-        deadline: cDeadline,
-        maxScore: typeof cMax === 'number' ? cMax : undefined,
-        assignmentType: cType || undefined,
+        deadline: cDeadline, // YYYY-MM-DD
+        maxScore: cMax === '' ? undefined : Number(cMax),
+        assignmentType: String(cType).toUpperCase() as Assignment['assignmentType'],
       }
-      const { data } = await api.post('/api/assignments/create-assignment', payload)
+      const { data } = await api.post('/api/assignments/create-assignment', payload, { headers: { ...authHeaders() } })
       const created = data?.assignment as any
-      const courseTitle = courses.find(c => c.id === created?.courseId)?.title
-      setRows(prev => [
+      const courseTitle = courses.find((c) => c.id === created?.courseId)?.title
+      setRows((prev) => [
         {
           id: created?.id,
           title: created?.title,
           description: created?.description,
           courseId: created?.courseId,
           courseTitle,
-          deadline: (created?.deadline || '').slice(0, 10),
+          deadline: toDateOnly(created?.deadline),
           maxScore: created?.maxScore,
-          assignmentType: created?.assignmentType,
+          assignmentType: (created?.assignmentType || 'ASSIGNMENT') as any,
           status: 'Active',
           submissions: 0,
         },
@@ -123,56 +128,77 @@ export default function InstructorAssignments() {
       ])
       showToast({ kind: 'success', title: 'Assignment created', message: data?.message || 'Saved successfully.' })
       setCreateOpen(false)
-    } catch (e: any) {
-      showToast({ kind: 'error', title: 'Create failed', message: e?.response?.data?.message || 'Please try again.' })
-    } finally { setWorking(false) }
-  }
+    } catch (err: any) {
+      const msg = err?.response?.status === 403 ? 'Forbidden: insufficient role' : err?.response?.data?.message || 'Please try again.'
+      showToast({ kind: 'error', title: 'Create failed', message: msg })
+    } finally {
+      setWorking(false)
+    }
+  }, [cTitle, cCourseId, cType, cDeadline, cDesc, cMax, courses])
 
-  /* ------------ (demo) submit assignment ------------ */
-  const openSubmit = (assignmentId?: string) => {
-    setSAssignmentId(assignmentId || '')
-    setSLink('')
-    setSubmitOpen(true)
-  }
-  async function onSubmitAssignment(e: React.FormEvent) {
+  const onEdit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!sAssignmentId || !sLink) {
-      showToast({ kind: 'warning', title: 'Missing fields', message: 'Provide an assignment and a link.' })
+    if (!eId || !eTitle || !eCourseId || !eType || !eDeadline) {
+      showToast({ kind: 'warning', title: 'Missing fields', message: 'Please fill title, course, type and due date.' })
       return
     }
     setWorking(true)
     try {
-      const { data } = await api.post(`/api/submit/submit-assignment/${sAssignmentId}`, { submissionLink: sLink })
-      showToast({ kind: 'success', title: 'Submitted', message: data?.message || 'Submission successful.' })
-      setSubmitOpen(false)
-    } catch (e: any) {
-      showToast({ kind: 'error', title: 'Submit failed', message: e?.response?.data?.message || 'Please try again.' })
-    } finally { setWorking(false) }
-  }
-
-  /* ------------ grade submission ------------ */
-  const openGrade = (submissionId?: string) => {
-    setGSubmissionId(submissionId || '')
-    setGScore(''); setGFeedback('')
-    setGradeOpen(true)
-  }
-  async function onGrade(e: React.FormEvent) {
-    e.preventDefault()
-    if (!gSubmissionId || gScore === '' || Number.isNaN(Number(gScore))) {
-      showToast({ kind: 'warning', title: 'Missing fields', message: 'Provide a valid score (number).' })
-      return
+      const payload = {
+        title: eTitle,
+        description: eDesc || undefined,
+        courseId: eCourseId,
+        deadline: eDeadline, // YYYY-MM-DD
+        maxScore: eMax === '' ? undefined : Number(eMax),
+        assignmentType: String(eType).toUpperCase() as Assignment['assignmentType'],
+      }
+      const { data } = await api.put(`/api/assignments/edit-assignment/${eId}`, payload, { headers: { ...authHeaders() } })
+      const updated = data?.date || null
+      setRows((prev) =>
+        prev.map((r) =>
+          r.id === eId
+            ? {
+                ...r,
+                title: updated?.title ?? eTitle,
+                description: updated?.description ?? (eDesc || undefined),
+                courseId: updated?.courseId ?? eCourseId,
+                courseTitle: courses.find((c) => c.id === (updated?.courseId ?? eCourseId))?.title,
+                deadline: toDateOnly(updated?.deadline ?? eDeadline),
+                maxScore: typeof (updated?.maxScore ?? eMax) === 'number' ? (updated?.maxScore ?? Number(eMax)) : undefined,
+                assignmentType: ((updated?.assignmentType ?? eType) as any),
+              }
+            : r,
+        ),
+      )
+      showToast({ kind: 'success', title: 'Assignment updated', message: data?.message || 'Changes saved.' })
+      setEditOpen(false)
+    } catch (err: any) {
+      const msg = err?.response?.status === 403 ? 'Forbidden: insufficient role' : err?.response?.data?.message || 'Please try again.'
+      showToast({ kind: 'error', title: 'Update failed', message: msg })
+    } finally {
+      setWorking(false)
     }
-    setWorking(true)
-    try {
-      const { data } = await api.post(`/api/submit/grade/${gSubmissionId}`, { score: Number(gScore), feedback: gFeedback || undefined })
-      showToast({ kind: 'success', title: 'Graded', message: data?.message || 'Submission graded.' })
-      setGradeOpen(false)
-    } catch (e: any) {
-      showToast({ kind: 'error', title: 'Grade failed', message: e?.response?.data?.message || 'Please try again.' })
-    } finally { setWorking(false) }
-  }
+  }, [eId, eTitle, eCourseId, eType, eDeadline, eDesc, eMax, courses])
 
-  const ultraBusy = loading || working
+  const onDelete = useCallback(async (id: string) => {
+    const ok = window.confirm('Delete this assignment? This cannot be undone.')
+    if (!ok) return
+    setWorking(true)
+    setDeletingId(id)
+    try {
+      await api.delete(`/api/assignments/delete-assignment/${id}`, { headers: { ...authHeaders() } })
+      setRows(prev => prev.filter(r => r.id !== id))
+      showToast({ kind: 'success', title: 'Assignment deleted', message: 'Removed successfully.' })
+    } catch (err: any) {
+      const msg = err?.response?.status === 403 ? 'Forbidden: insufficient role' : err?.response?.data?.message || 'Please try again.'
+      showToast({ kind: 'error', title: 'Delete failed', message: msg })
+    } finally {
+      setDeletingId(null)
+      setWorking(false)
+    }
+  }, [])
+
+  const showOverlay = working
 
   return (
     <>
@@ -192,7 +218,7 @@ export default function InstructorAssignments() {
         </div>
 
         <div className="rounded-2xl border border-neutral-200 bg-white">
-          {/* Filters row (search + faux tabs look) */}
+          {/* Filters row */}
           <div className="flex flex-col gap-3 p-3 sm:p-4">
             <div className="relative max-w-lg">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-neutral-400" />
@@ -215,68 +241,34 @@ export default function InstructorAssignments() {
 
           {/* Table */}
           <div className="px-3 pb-3 sm:px-4 sm:pb-4">
-            <div className="overflow-x-auto">
-              <table className="w-full table-fixed border-separate border-spacing-0 min-w-[980px]">
-                <thead>
-                  <tr className="text-left text-neutral-700">
-                    <Th>Assignment</Th>
-                    <Th>Course</Th>
-                    <Th>Type</Th>
-                    <Th>Due Date</Th>
-                    <Th>Submissions</Th>
-                    <Th>Status</Th>
-                    <Th className="w-28 text-center">Actions</Th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading ? (
-                    <SkRows cols={7} rows={5} />
-                  ) : filtered.length === 0 ? (
-                    <tr><td colSpan={7} className="py-10 text-center text-neutral-500">No assignments yet.</td></tr>
-                  ) : (
-                    filtered.map(a => (
-                      <tr key={a.id} className="border-b border-neutral-200 last:border-0">
-                        <Td className="font-medium text-neutral-900">{a.title}</Td>
-                        <Td>{a.courseTitle || courses.find(c=>c.id===a.courseId)?.title || '-'}</Td>
-                        <Td>{prettyType(a.assignmentType)}</Td>
-                        <Td>{a.deadline ? a.deadline : '-'}</Td>
-                        <Td>{a.submissions ?? 0}</Td>
-                        <Td>
-                          {a.status === 'Active'
-                            ? <span className="inline-flex items-center rounded-full bg-[#0B5CD7] px-2 py-0.5 text-xs text-white">Active</span>
-                            : a.status === 'Completed'
-                              ? <span className="inline-flex items-center rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-700">Completed</span>
-                              : <span className="inline-flex items-center rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-700">Draft</span>}
-                        </Td>
-                        <Td className="text-center">
-                          <div className="flex items-center justify-center gap-3">
-                            <button className="rounded-md p-2 hover:bg-neutral-100" title="View / Submit (demo)" onClick={() => openSubmit(a.id)}>
-                              <Eye className="h-4 w-4 text-neutral-700" />
-                            </button>
-                            <button className="rounded-md p-2 hover:bg-neutral-100" title="Grade (demo)" onClick={() => openGrade('b1fa6291-d6c9-4f6f-935d-8b7f0b5c14f2')}>
-                              <SquarePen className="h-4 w-4 text-neutral-700" />
-                            </button>
-                            <button className="rounded-md p-2 hover:bg-neutral-100" title="Delete (local)" onClick={() => setRows(rs => rs.filter(x => x.id !== a.id))}>
-                              <Trash2 className="h-4 w-4 text-[#FF6A3D]" />
-                            </button>
-                          </div>
-                        </Td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
+            <TableSection
+              rows={rows}
+              query={query}
+              courses={courses}
+              listLoading={listLoading}
+              openEdit={openEdit}
+              onDelete={onDelete}
+              working={working}
+              deletingId={deletingId}
+            />
           </div>
         </div>
       </div>
 
-      {/* Create Assignment Modal */}
+      {/* Create Modal */}
       {createOpen && (
         <Modal title="Create New Assignment" subtext="Create a new assignment for your students" onClose={() => !working && setCreateOpen(false)}>
           <form onSubmit={onCreate} className="space-y-4">
             <Field label="Title">
-              <input className="input" placeholder="Assignment title" value={cTitle} onChange={e => setCTitle(e.target.value)} required />
+              <input
+                className="input"
+                placeholder="Assignment title"
+                value={cTitle}
+                onChange={(e) => setCTitle(e.target.value)}
+                required
+                autoFocus
+                onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault() }}
+              />
             </Field>
 
             <div className="grid sm:grid-cols-2 gap-4">
@@ -285,20 +277,20 @@ export default function InstructorAssignments() {
                   value={cCourseId}
                   onChange={setCCourseId}
                   placeholder="Select course"
-                  options={courses.map(c => ({ value: c.id, label: c.title }))}
+                  options={courses.map((c) => ({ value: c.id, label: c.title }))}
                 />
               </Field>
 
               <Field label="Type">
                 <HeadlessSelect
                   value={cType}
-                  onChange={(v) => setCType(v as any)}
+                  onChange={(v) => setCType((String(v).toUpperCase() as any))}
                   placeholder="Assignment type"
                   options={[
                     { value: 'ASSIGNMENT', label: 'Assignment' },
-                    { value: 'PROJECT',    label: 'Project' },
-                    { value: 'QUIZ',       label: 'Quiz' },
-                    { value: 'CAPSTONE',   label: 'Capstone' },
+                    { value: 'PROJECT', label: 'Project' },
+                    { value: 'QUIZ', label: 'Quiz' },
+                    { value: 'CAPSTONE', label: 'Capstone' },
                   ]}
                 />
               </Field>
@@ -306,93 +298,224 @@ export default function InstructorAssignments() {
 
             <div className="grid sm:grid-cols-2 gap-4">
               <Field label="Due Date">
-                <input className="input" type="date" value={cDeadline} onChange={e => setCDeadline(e.target.value)} required />
+                <input className="input" type="date" value={cDeadline} onChange={(e) => setCDeadline(e.target.value)} required />
               </Field>
               <Field label="Max Score">
-                <input className="input" type="number" min={0} placeholder="e.g., 100" value={cMax} onChange={e => setCMax(e.target.value === '' ? '' : Number(e.target.value))} />
+                <input
+                  className="input"
+                  type="number"
+                  min={0}
+                  placeholder="e.g., 100"
+                  value={cMax}
+                  onChange={(e) => setCMax(e.target.value === '' ? '' : Number(e.target.value))}
+                />
               </Field>
             </div>
 
             <Field label="Description">
-              <textarea className="input min-h-[112px] resize-y" placeholder="Assignment instructions and requirements" value={cDesc} onChange={e => setCDesc(e.target.value)} />
+              <textarea
+                className="input min-h-[112px] resize-y"
+                placeholder="Assignment instructions and requirements"
+                value={cDesc}
+                onChange={(e) => setCDesc(e.target.value)}
+              />
             </Field>
 
             <div className="flex items-center justify-end gap-2 pt-2">
-              <button type="button" className="btn-secondary" onClick={() => setCreateOpen(false)} disabled={working}>Cancel</button>
-              <button type="submit" className="btn-primary rounded-lg p-2" disabled={working}>Create Assignment</button>
+              <button type="button" className="btn-secondary" onClick={() => setCreateOpen(false)} disabled={working}>
+                Cancel
+              </button>
+              <button type="submit" className="btn-primary rounded-lg p-2" disabled={working}>
+                Create Assignment
+              </button>
             </div>
           </form>
         </Modal>
       )}
 
-      {/* Demo Submit Modal */}
-      {submitOpen && (
-        <Modal title="Submit Assignment (Demo)" onClose={() => !working && setSubmitOpen(false)}>
-          <form onSubmit={onSubmitAssignment} className="space-y-4">
-            <Field label="Assignment">
-              <HeadlessSelect
-                value={sAssignmentId}
-                onChange={setSAssignmentId}
-                placeholder="Select assignment"
-                options={rows.map(r => ({ value: r.id, label: r.title }))}
+      {/* Edit Modal */}
+      {editOpen && (
+        <Modal title="Edit Assignment" subtext="Update assignment details" onClose={() => !working && setEditOpen(false)}>
+          <form onSubmit={onEdit} className="space-y-4">
+            <Field label="Title">
+              <input
+                className="input"
+                placeholder="Assignment title"
+                value={eTitle}
+                onChange={(e) => setETitle(e.target.value)}
+                required
+                autoFocus
+                onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault() }}
               />
             </Field>
-            <Field label="Submission Link">
-              <input className="input" placeholder="https://github.com/…" value={sLink} onChange={e => setSLink(e.target.value)} required />
-            </Field>
-            <div className="flex items-center justify-end gap-2">
-              <button type="button" className="btn-secondary" onClick={() => setSubmitOpen(false)} disabled={working}>Cancel</button>
-              <button type="submit" className="btn-primary rounded-lg p-2" disabled={working}>Submit</button>
-            </div>
-          </form>
-        </Modal>
-      )}
 
-      {/* Grade Modal */}
-      {gradeOpen && (
-        <Modal title="Grade Submission" onClose={() => !working && setGradeOpen(false)}>
-          <form onSubmit={onGrade} className="space-y-4">
-            <Field label="Submission ID">
-              <input className="input" placeholder="b1fa6291-… (demo)" value={gSubmissionId} onChange={e => setGSubmissionId(e.target.value)} required />
-            </Field>
             <div className="grid sm:grid-cols-2 gap-4">
-              <Field label="Score">
-                <input className="input" type="number" min={0} placeholder="e.g., 85" value={gScore} onChange={e => setGScore(e.target.value === '' ? '' : Number(e.target.value))} required />
+              <Field label="Course">
+                <HeadlessSelect
+                  value={eCourseId}
+                  onChange={setECourseId}
+                  placeholder="Select course"
+                  options={courses.map((c) => ({ value: c.id, label: c.title }))}
+                />
               </Field>
-              <Field label="Feedback">
-                <input className="input" placeholder="Optional feedback" value={gFeedback} onChange={e => setGFeedback(e.target.value)} />
+
+              <Field label="Type">
+                <HeadlessSelect
+                  value={eType}
+                  onChange={(v) => setEType((String(v).toUpperCase() as any))}
+                  placeholder="Assignment type"
+                  options={[
+                    { value: 'ASSIGNMENT', label: 'Assignment' },
+                    { value: 'PROJECT', label: 'Project' },
+                    { value: 'QUIZ', label: 'Quiz' },
+                    { value: 'CAPSTONE', label: 'Capstone' },
+                  ]}
+                />
               </Field>
             </div>
-            <div className="flex items-center justify-end gap-2">
-              <button type="button" className="btn-secondary" onClick={() => setGradeOpen(false)} disabled={working}>Cancel</button>
-              <button type="submit" className="btn-primary rounded-lg p-2" disabled={working}>Save Grade</button>
+
+            <div className="grid sm:grid-cols-2 gap-4">
+              <Field label="Due Date">
+                <input className="input" type="date" value={eDeadline} onChange={(e) => setEDeadline(e.target.value)} required />
+              </Field>
+              <Field label="Max Score">
+                <input
+                  className="input"
+                  type="number"
+                  min={0}
+                  placeholder="e.g., 100"
+                  value={eMax}
+                  onChange={(e) => setEMax(e.target.value === '' ? '' : Number(e.target.value))}
+                />
+              </Field>
+            </div>
+
+            <Field label="Description">
+              <textarea
+                className="input min-h-[112px] resize-y"
+                placeholder="Assignment instructions and requirements"
+                value={eDesc}
+                onChange={(e) => setEDesc(e.target.value)}
+              />
+            </Field>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button type="button" className="btn-secondary" onClick={() => setEditOpen(false)} disabled={working}>
+                Cancel
+              </button>
+              <button type="submit" className="btn-primary rounded-lg p-2" disabled={working}>
+                Save Changes
+              </button>
             </div>
           </form>
         </Modal>
       )}
 
-      {/* Ultra loader (same shared look) */}
+      {/* Mutation overlay (no blur) */}
       <UltraLoader
-        show={ultraBusy}
+        show={showOverlay}
         label={
-          loading ? 'Loading…' :
-          working && createOpen   ? 'Creating assignment…' :
-          working && submitOpen   ? 'Submitting…' :
-          working && gradeOpen    ? 'Saving grade…' : ''
+          working && createOpen ? 'Creating assignment…' :
+          working && editOpen   ? 'Saving changes…'   :
+          working && deletingId ? 'Deleting assignment…' : 'Please wait…'
         }
       />
     </>
   )
 }
 
-/* ————— Presentational helpers ————— */
+/* ---------------- Table (Memoized) ---------------- */
+const TableSection = memo(function TableSection({
+  rows, query, courses, listLoading, openEdit, onDelete, working, deletingId,
+}: {
+  rows: Assignment[]
+  query: string
+  courses: Course[]
+  listLoading: boolean
+  openEdit: (a: Assignment) => void
+  onDelete: (id: string) => void
+  working: boolean
+  deletingId: string | null
+}) {
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return rows
+    return rows.filter((r) =>
+      [r.title, r.courseTitle, r.assignmentType, r.deadline].filter(Boolean).some((v) => String(v).toLowerCase().includes(q)),
+    )
+  }, [rows, query])
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full table-fixed border-separate border-spacing-0 min-w-[980px]">
+        <thead>
+          <tr className="text-left text-neutral-700">
+            <Th>Assignment</Th>
+            <Th>Course</Th>
+            <Th>Type</Th>
+            <Th>Due Date</Th>
+            <Th>Submissions</Th>
+            <Th>Status</Th>
+            <Th className="w-28 text-center">Actions</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {listLoading ? (
+            <SkRows cols={7} rows={5} />
+          ) : filtered.length === 0 ? (
+            <tr>
+              <td colSpan={7} className="py-10 text-center text-neutral-500">No assignments yet.</td>
+            </tr>
+          ) : (
+            filtered.map((a) => (
+              <tr key={a.id} className="border-b border-neutral-200 last:border-0">
+                <Td className="font-medium text-neutral-900">{a.title}</Td>
+                <Td>{a.courseTitle || courses.find((c) => c.id === a.courseId)?.title || '-'}</Td>
+                <Td>{prettyType(a.assignmentType)}</Td>
+                <Td>{a.deadline ? a.deadline : '-'}</Td>
+                <Td>{a.submissions ?? 0}</Td>
+                <Td>
+                  {a.status === 'Active' ? (
+                    <span className="inline-flex items-center rounded-full bg-[#0B5CD7] px-2 py-0.5 text-xs text-white">Active</span>
+                  ) : a.status === 'Completed' ? (
+                    <span className="inline-flex items-center rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-700">Completed</span>
+                  ) : (
+                    <span className="inline-flex items-center rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-700">Draft</span>
+                  )}
+                </Td>
+                <Td className="text-center">
+                  <div className="flex items-center justify-center gap-1.5">
+                    <button className="rounded-md p-2 hover:bg-neutral-100" title="Edit" onClick={() => openEdit(a)}>
+                      <SquarePen className="h-4 w-4 text-neutral-700" />
+                    </button>
+                    <button
+                      className="rounded-md p-2 hover:bg-neutral-100"
+                      title="Delete"
+                      onClick={() => onDelete(a.id)}
+                      disabled={working && deletingId === a.id}
+                    >
+                      <Trash2 className={`h-4 w-4 ${deletingId === a.id ? 'text-rose-400' : 'text-rose-600'}`} />
+                    </button>
+                  </div>
+                </Td>
+              </tr>
+            ))
+          )}
+        </tbody>
+      </table>
+    </div>
+  )
+})
+
+/* ---------------- Presentational ---------------- */
 function Pill({ children }: { children: React.ReactNode }) {
   return <span className="inline-flex items-center rounded-full border border-neutral-300 bg-white px-3 py-1 text-xs text-neutral-700">{children}</span>
 }
 function prettyType(t?: Assignment['assignmentType']) {
   if (!t) return '-'
-  const m: any = { ASSIGNMENT:'Assignment', QUIZ:'Quiz', PROJECT:'Project', CAPSTONE:'Capstone' }
-  return m[t] || t
+  const key = String(t).toUpperCase()
+  const m: any = { ASSIGNMENT: 'Assignment', QUIZ: 'Quiz', PROJECT: 'Project', CAPSTONE: 'Capstone' }
+  return m[key] || key
 }
 function Th({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return <th className={`py-3 text-sm font-semibold ${className}`}>{children}</th>
@@ -416,11 +539,9 @@ function SkRows({ cols, rows }: { cols: number; rows: number }) {
   )
 }
 
-/* ————— Modal (portal; full-viewport blur) ————— */
-function Modal({
-  onClose, title, subtext, children,
-}: { onClose: () => void; title: string; subtext?: string; children: React.ReactNode }) {
-  const el = useMemo(() => {
+/* ---------------- Modal (no blur; cheap overlay) ---------------- */
+function Modal({ onClose, title, subtext, children }: { onClose: () => void; title: string; subtext?: string; children: React.ReactNode }) {
+  const el = React.useMemo(() => {
     const d = document.createElement('div')
     d.setAttribute('data-modal-root', 'true')
     return d
@@ -440,7 +561,7 @@ function Modal({
 
   const node = (
     <>
-      <div className="fixed inset-0 z-[10000] h-screen w-screen bg-black/30 backdrop-blur-[2px]" onClick={onClose} />
+      <div className="fixed inset-0 z-[10000] h-screen w-screen bg-black/40" onClick={onClose} />
       <div className="fixed inset-0 z-[10001] grid place-items-center px-4" onClick={onClose}>
         <div
           role="dialog"
@@ -465,7 +586,7 @@ function Modal({
   return createPortal(node, el)
 }
 
-/* ————— Field & Headless Select ————— */
+/* ---------------- Field & Headless Select ---------------- */
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
@@ -474,9 +595,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     </div>
   )
 }
-function HeadlessSelect<T extends string>({
-  value, onChange, placeholder, options,
-}: {
+function HeadlessSelect<T extends string>({ value, onChange, placeholder, options }: {
   value: T | ''
   onChange: (v: T) => void
   placeholder?: string
@@ -485,19 +604,27 @@ function HeadlessSelect<T extends string>({
   const [open, setOpen] = useState(false)
   return (
     <div className="relative">
-      <button type="button" className="input w-full text-left pr-10" onClick={() => setOpen(o => !o)}>
-        {value ? (options.find(o => o.value === value)?.label ?? '') : <span className="text-neutral-400">{placeholder || 'Select…'}</span>}
+      <button
+        type="button"
+        className="input w-full text-left pr-10"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        {value ? options.find((o) => o.value === value)?.label ?? '' : <span className="text-neutral-400">{placeholder || 'Select…'}</span>}
         <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-500 pointer-events-none" />
       </button>
       {open && (
         <div className="absolute left-0 right-0 mt-2 z-20 rounded-xl border border-neutral-200 bg-white shadow-lg overflow-hidden">
-          <ul className="py-1 max-h-60 overflow-auto">
+          <ul className="py-1 max-h-60 overflow-auto" role="listbox">
             {options.map((opt) => {
               const isSel = opt.value === value
               return (
                 <li
                   key={opt.value}
-                  onMouseDown={(e) => { e.preventDefault(); onChange(opt.value); setOpen(false) }}
+                  role="option"
+                  aria-selected={isSel}
+                  onClick={() => { onChange(opt.value); setOpen(false) }}
                   className="px-3 py-2 cursor-pointer flex items-center justify-between hover:bg-[#0B5CD7] hover:text-white text-sm"
                 >
                   <span>{opt.label}</span>
@@ -512,11 +639,11 @@ function HeadlessSelect<T extends string>({
   )
 }
 
-/* ————— Ultra Loader (shared look) ————— */
+/* ---------------- Mutation overlay (no blur) ---------------- */
 function UltraLoader({ show, label = '' }: { show: boolean; label?: string }) {
   if (!show) return null
   return (
-    <div aria-busy="true" role="status" className="fixed inset-0 z-[9999] grid place-items-center bg-black/20 backdrop-blur-sm">
+    <div aria-busy="true" role="status" className="fixed inset-0 z-[9999] grid place-items-center bg-black/20">
       <div className="rounded-2xl border border-neutral-200 bg-white/90 px-6 py-5 shadow-2xl">
         <div className="flex items-center gap-4">
           <div className="relative h-10 w-10">
@@ -535,4 +662,11 @@ function UltraLoader({ show, label = '' }: { show: boolean; label?: string }) {
       </div>
     </div>
   )
+}
+
+/* ---------------- util ---------------- */
+function toDateOnly(d?: string) {
+  if (!d) return ''
+  const s = String(d)
+  return s.length >= 10 ? s.slice(0, 10) : s
 }

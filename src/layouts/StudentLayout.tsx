@@ -1,6 +1,5 @@
-// src/layouts/InstructorLayout.tsx
 import { NavLink, Outlet } from 'react-router-dom'
-import { Bell, LayoutDashboard, Users, Notebook, BarChart3, Megaphone, LogOut, Menu, X, ChevronDown } from 'lucide-react'
+import { Bell, LayoutDashboard, BookOpen, Notebook, BarChart3, Megaphone, LogOut, Menu, X, ChevronDown } from 'lucide-react'
 import { LuGraduationCap } from 'react-icons/lu'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useAuth } from '../auth/AuthContext'
@@ -13,16 +12,17 @@ type NavItem = {
 }
 
 type DashboardMini = {
-  totalStudents: number
-  totalPendingReviews: number
+  activeCourses?: number
+  totalCourses?: number
+  pendingAssignments?: number
 }
 
-export default function InstructorLayout() {
+export default function StudentLayout() {
   const { user, logout } = useAuth()
   const displayName =
     (user as any)?.name ||
     (user as any)?.fullName ||
-    'John Smith'
+    'Alice Cooper'
 
   const initials = useMemo(() => {
     return displayName
@@ -34,40 +34,36 @@ export default function InstructorLayout() {
       .toUpperCase()
   }, [displayName])
 
-  // sidebar badges (dynamic)
-  const [studentsCount, setStudentsCount] = useState<number>(0)
-  const [pendingReviewsCount, setPendingReviewsCount] = useState<number>(0)
+  // left-badge counts (defaults reflect screenshot: 3 courses, 2 assignments)
+  const [coursesCount, setCoursesCount] = useState<number>(3)
+  const [pendingAssignments, setPendingAssignments] = useState<number>(2)
 
-  // fetch counts from instructor dashboard endpoint
+  // (optional) try to hydrate counts from student dashboard; silently ignore if endpoint not ready
   useEffect(() => {
     const controller = new AbortController()
     ;(async () => {
       try {
         const base = import.meta.env.VITE_API_BASE_URL as string
-        if (!base) throw new Error('VITE_API_BASE_URL is not set')
-
+        if (!base) return
         const token =
           localStorage.getItem('access_token') ||
           localStorage.getItem('token') ||
           sessionStorage.getItem('access_token') ||
           ''
-
-        const res = await fetch(`${base}/api/instructor/instructor-dashboard`, {
-          method: 'GET',
+        const res = await fetch(`${base}/api/student/student-dashboard`, {
           headers: {
             'Content-Type': 'application/json',
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
           signal: controller.signal,
         })
-
-        if (!res.ok) throw new Error(`Failed: ${res.status}`)
-        const json = (await res.json()) as DashboardMini
-        setStudentsCount(Number(json?.totalStudents ?? 0))
-        setPendingReviewsCount(Number(json?.totalPendingReviews ?? 0))
-      } catch (_e) {
-        // Silently ignore for the layout; badges will just show 0 if it fails.
-      }
+        if (!res.ok) return
+        const j = (await res.json()) as DashboardMini & Record<string, any>
+        const c = (j.activeCourses ?? j.totalCourses ?? j.curriculum?.length ?? 3) as number
+        const p = (j.pendingAssignments ?? j.totalPendingAssignments ?? 2) as number
+        setCoursesCount(Number(c || 0))
+        setPendingAssignments(Number(p || 0))
+      } catch {}
     })()
     return () => controller.abort()
   }, [])
@@ -89,13 +85,13 @@ export default function InstructorLayout() {
 
   const NAV: NavItem[] = useMemo(
     () => [
-      { to: '/instructor', label: 'Dashboard', icon: LayoutDashboard },
-      { to: '/instructor/students', label: 'Students', icon: Users, count: studentsCount },
-      { to: '/instructor/assignments', label: 'Assignments', icon: Notebook, count: pendingReviewsCount },
-      { to: '/instructor/analytics', label: 'Analytics', icon: BarChart3 },
-      { to: '/instructor/announcements', label: 'Announcements', icon: Megaphone },
+      { to: '/student', label: 'Dashboard', icon: LayoutDashboard },
+      { to: '/student/courses', label: 'My Courses', icon: BookOpen, count: coursesCount },
+      { to: '/student/assignments', label: 'Assignments', icon: Notebook, count: pendingAssignments },
+      { to: '/student/grades', label: 'Grades & Progress', icon: BarChart3 },
+      { to: '/student/announcements', label: 'Announcements', icon: Megaphone },
     ],
-    [studentsCount, pendingReviewsCount]
+    [coursesCount, pendingAssignments]
   )
 
   return (
@@ -121,7 +117,7 @@ export default function InstructorLayout() {
               <NavLink
                 key={item.to}
                 to={item.to}
-                end={item.to === '/instructor'}
+                end={item.to === '/student'}
                 className={({ isActive }) =>
                   [
                     'flex items-center gap-3 rounded-xl px-3 py-2 text-sm',
@@ -150,7 +146,7 @@ export default function InstructorLayout() {
             <div className="flex-1 text-left">
               <div className="text-sm font-medium">{displayName}</div>
               <div>
-                <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs text-blue-700">Instructor</span>
+                <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">Student</span>
               </div>
             </div>
             <ChevronDown className="h-4 w-4 text-neutral-500" />
@@ -180,7 +176,7 @@ export default function InstructorLayout() {
           </button>
 
           <div>
-            <h1 className="text-lg font-semibold text-neutral-900">Instructor Dashboard</h1>
+            <h1 className="text-lg font-semibold text-neutral-900">Student Dashboard</h1>
             <p className="text-sm text-neutral-500 -mt-0.5">Welcome back, {displayName}!</p>
           </div>
 
@@ -222,7 +218,7 @@ export default function InstructorLayout() {
                   <NavLink
                     key={item.to}
                     to={item.to}
-                    end={item.to === '/instructor'}
+                    end={item.to === '/student'}
                     onClick={() => setDrawer(false)}
                     className={({ isActive }) =>
                       [
