@@ -14,7 +14,7 @@ import Interns from './pages/admin/Interns'
 import Settings from './pages/admin/Settings'
 
 import InstructorLayout from './layouts/InstructorLayout'
-import { InstructorDashboard } from './pages/instructor/InstructorDashboard'
+import InstructorDashboard from './pages/instructor/InstructorDashboard'
 import InstructorStudents from './pages/instructor/InstructorStudents'
 import InstructorAssignments from './pages/instructor/InstructorAssignments'
 import InstructorAnalytics from './pages/instructor/InstructorAnalytics'

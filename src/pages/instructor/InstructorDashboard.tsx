@@ -1,275 +1,363 @@
-// src/pages/instructor/InstructorDashboard.tsx
-import * as React from 'react'
-import { UltraLoader } from './_shared/UltraLoader' // same modern loader used on Admin → Courses
-import { BookOpen, Users, ClipboardList, Gauge } from 'lucide-react'
+"use client";
+import React, { useEffect, useState } from "react";
+import { UltraLoader } from "./_shared/UltraLoader";
+import { BookOpen, Users, ClipboardList, Gauge, RefreshCw } from "lucide-react";
 
 type DashboardApi = {
-  totalStudents: number
-  totalPendingReviews: number
-  classAverage: number | null
+  totalStudents: number;
+  totalPendingReviews: number;
+  classAverage: number | null;
   curriculum: Array<{
-    courseId: string
-    courseName: string
-    studentsCount: number
-    avgProgress: number
-    nextDeadline?: string | null
-  }>
+    courseId: string;
+    courseName: string;
+    studentsCount: number;
+    avgProgress: number;
+    nextDeadline?: string | null;
+  }>;
   recentActivity: Array<{
-    message: string
-    timeAgo: string
-  }>
-}
+    message: string;
+    timeAgo: string;
+  }>;
+};
 
-export function InstructorDashboard() {
-  const [loading, setLoading] = React.useState(true)
-  const [working, setWorking] = React.useState(false) // reserved for future actions to trigger the same overlay
-  const [data, setData] = React.useState<DashboardApi | null>(null)
-  const [error, setError] = React.useState<string | null>(null)
+export default function InstructorDashboard() {
+  const [loading, setLoading] = useState(true);
+  const [working, setWorking] = useState(false);
+  const [data, setData] = useState<DashboardApi | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  React.useEffect(() => {
-    void load()
-  }, [])
+  const base = import.meta.env.VITE_API_BASE_URL as string;
+  const token =
+    localStorage.getItem("access_token") ||
+    localStorage.getItem("token") ||
+    sessionStorage.getItem("access_token") ||
+    "";
 
-  async function load() {
-    const controller = new AbortController()
+  useEffect(() => {
+    void loadDashboard();
+  }, []);
+
+  async function loadDashboard() {
+    if (!base) {
+      setError("API base URL not configured");
+      setLoading(false);
+      return;
+    }
+
+    const controller = new AbortController();
     try {
-      setLoading(true)
-      setError(null)
-
-      const base = import.meta.env.VITE_API_BASE_URL as string
-      if (!base) throw new Error('VITE_API_BASE_URL is not set')
-
-      const token =
-        localStorage.getItem('access_token') ||
-        localStorage.getItem('token') ||
-        sessionStorage.getItem('access_token') ||
-        ''
+      setLoading(true);
+      setError(null);
 
       const res = await fetch(`${base}/api/instructor/instructor-dashboard`, {
-        method: 'GET',
+        method: "GET",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         signal: controller.signal,
-      })
+      });
 
       if (!res.ok) {
-        const text = await res.text().catch(() => '')
-        throw new Error(text || `Request failed with ${res.status}`)
+        const text = await res.text().catch(() => "");
+        throw new Error(text || `Request failed: ${res.status}`);
       }
 
-      const json = (await res.json()) as DashboardApi
-      setData(json)
+      const json = (await res.json()) as DashboardApi;
+      setData(json);
     } catch (e: any) {
-      if (e?.name !== 'AbortError') setError(e?.message || 'Failed to load dashboard')
+      if (e?.name !== "AbortError") {
+        setError(e?.message || "Failed to load dashboard");
+      }
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-    return () => controller.abort()
+
+    return () => controller.abort();
   }
 
-  const ultraBusy = loading || working
-  const ultraLabel =
-    loading ? 'Loading dashboard…'
-    : working ? 'Syncing…'
-    : ''
+  const ultraBusy = loading || working;
+  const ultraLabel = loading ? "Loading dashboard…" : working ? "Syncing…" : "";
 
-  const activeCourses = data?.curriculum?.length ?? 0
-  const totalStudents = data?.totalStudents ?? 0
-  const pendingReviews = data?.totalPendingReviews ?? 0
+  const activeCourses = data?.curriculum?.length ?? 0;
+  const totalStudents = data?.totalStudents ?? 0;
+  const pendingReviews = data?.totalPendingReviews ?? 0;
 
   return (
     <>
       <div className="space-y-6">
-        {/* ——— Stats row ——— */}
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-[22px] font-semibold text-neutral-900">Dashboard</h1>
+            <p className="text-sm text-neutral-500 -mt-0.5">Your teaching overview at a glance</p>
+          </div>
+          <button
+            onClick={() => loadDashboard()}
+            className="inline-flex items-center gap-2 rounded-xl border border-neutral-300 bg-white px-3 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50 disabled:opacity-60"
+            disabled={loading}
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+            Refresh
+          </button>
+        </div>
+
+        {/* Error State */}
+        {error && (
+          <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 flex items-center justify-between">
+            <span>{error}</span>
+            <button
+              onClick={() => loadDashboard()}
+              className="ml-4 inline-flex items-center gap-1 rounded-lg bg-red-100 px-3 py-1 text-sm font-medium text-red-700 hover:bg-red-200"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {/* Stats Grid */}
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard
             title="Active Courses"
             value={<Num n={activeCourses} className="text-[#0B5CD7]" />}
-            caption="Teaching actively"
+            caption="Currently teaching"
             Icon={BookOpen}
+            loading={loading}
           />
           <StatCard
             title="Total Students"
             value={<Num n={totalStudents} className="text-[#0FA958]" />}
             caption="Across all courses"
             Icon={Users}
+            loading={loading}
           />
           <StatCard
             title="Pending Reviews"
             value={<Num n={pendingReviews} className="text-[#E79E2B]" />}
             caption="Assignments to grade"
             Icon={ClipboardList}
+            loading={loading}
           />
           <StatCard
-            title="Average Score"
+            title="Class Average"
             value={
               <span className="text-[28px] font-semibold text-[#0FA5B4]">
-                {formatAverage(data?.classAverage)}
+                {loading ? "—" : formatAverage(data?.classAverage)}
               </span>
             }
-            caption="Class average"
+            caption="Overall performance"
             Icon={Gauge}
+            loading={loading}
           />
         </div>
 
-        {/* ——— Two columns ——— */}
+        {/* Two Columns */}
         <div className="grid gap-4 lg:grid-cols-2">
           {/* My Courses */}
           <div className="rounded-2xl border border-neutral-200 bg-white p-5">
             <div className="mb-4">
-              <div className="text-[16px] font-semibold text-neutral-900">My Courses</div>
-              <div className="text-sm text-neutral-500 -mt-0.5">Your assigned courses and progress</div>
+              <h2 className="text-[16px] font-semibold text-neutral-900">My Courses</h2>
+              <p className="text-sm text-neutral-500 -mt-0.5">Progress and deadlines</p>
             </div>
 
-            {data?.curriculum?.length ? (
+            {loading ? (
+              <SkeletonCourseList />
+            ) : data?.curriculum?.length ? (
               <div className="space-y-6">
                 {data.curriculum.map((c) => (
                   <CourseRow
                     key={c.courseId}
                     title={c.courseName}
                     percent={clampPercent(c.avgProgress)}
-                    students={`${c.studentsCount} ${c.studentsCount === 1 ? 'student' : 'students'}`}
-                    nextDeadline={c.nextDeadline ?? '—'}
+                    students={`${c.studentsCount} ${c.studentsCount === 1 ? "student" : "students"}`}
+                    nextDeadline={c.nextDeadline ?? "—"}
                   />
                 ))}
               </div>
             ) : (
-              <EmptyHint text={loading ? 'Loading…' : 'No assigned courses yet.'} />
+              <EmptyHint text="No assigned courses yet." />
             )}
           </div>
 
           {/* Recent Activity */}
           <div className="rounded-2xl border border-neutral-200 bg-white p-5">
             <div className="mb-4">
-              <div className="text-[16px] font-semibold text-neutral-900">Recent Activity</div>
-              <div className="text-sm text-neutral-500 -mt-0.5">Latest student submissions and activities</div>
+              <h2 className="text-[16px] font-semibold text-neutral-900">Recent Activity</h2>
+              <p className="text-sm text-neutral-500 -mt-0.5">Latest student updates</p>
             </div>
 
-            {data?.recentActivity?.length ? (
+            {loading ? (
+              <SkeletonActivityList />
+            ) : data?.recentActivity?.length ? (
               <ul className="space-y-5">
                 {data.recentActivity.map((a, i) => (
                   <Activity
                     key={i}
-                    kind={a.message.toLowerCase().includes('missed deadline') ? 'warn' : 'ok'}
+                    kind={a.message.toLowerCase().includes("missed deadline") ? "warn" : "ok"}
                     title={a.message}
                     meta={a.timeAgo}
                   />
                 ))}
               </ul>
             ) : (
-              <EmptyHint text={loading ? 'Loading…' : 'No recent activity to show.'} />
+              <EmptyHint text="No recent activity." />
             )}
           </div>
         </div>
-
-        {error && (
-          <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-            {error}
-          </div>
-        )}
       </div>
 
-      {/* Same ultramodern overlay used elsewhere */}
       <UltraLoader show={ultraBusy} label={ultraLabel} />
     </>
-  )
+  );
 }
 
-/* ————— Bits ————— */
+/* ————— Enhanced Components ————— */
 
 function StatCard({
-  title, value, caption, Icon,
-}: { title: string; value: React.ReactNode; caption: string; Icon: any }) {
+  title,
+  value,
+  caption,
+  Icon,
+  loading,
+}: {
+  title: string;
+  value: React.ReactNode;
+  caption: string;
+  Icon: any;
+  loading: boolean;
+}) {
   return (
-    <div className="relative rounded-2xl border border-neutral-200 bg-white p-5">
+    <div className="relative rounded-2xl border border-neutral-200 bg-white p-5 transition-shadow hover:shadow-sm">
       <div className="flex items-start justify-between">
         <div className="text-sm font-medium text-neutral-800">{title}</div>
         <div className="h-8 w-8 rounded-md bg-white text-neutral-400 grid place-items-center border border-neutral-200">
           <Icon className="h-4 w-4" />
         </div>
       </div>
-      <div className="mt-4">{value}</div>
+      <div className="mt-4">
+        {loading ? (
+          <div className="h-8 w-20 bg-neutral-100 rounded animate-pulse" />
+        ) : (
+          value
+        )}
+      </div>
       <div className="mt-1 text-sm text-neutral-500">{caption}</div>
     </div>
-  )
+  );
 }
 
 function Num({ n, className }: { n: number; className?: string }) {
-  return <span className={`text-[28px] font-semibold ${className}`}>{n}</span>
+  return <span className={`text-[28px] font-semibold ${className}`}>{n}</span>;
 }
 
 function CourseRow({
-  title, percent, students, nextDeadline,
-}: { title: string; percent: number; students: string; nextDeadline: string | number }) {
+  title,
+  percent,
+  students,
+  nextDeadline,
+}: {
+  title: string;
+  percent: number;
+  students: string;
+  nextDeadline: string;
+}) {
   return (
     <div>
       <div className="flex items-center justify-between">
-        <div className="font-medium text-neutral-900">{title}</div>
+        <div className="font-medium text-neutral-900 truncate max-w-[180px]">{title}</div>
         <span className="inline-flex items-center rounded-full border border-neutral-300 bg-neutral-50 px-2 py-0.5 text-xs text-neutral-700">
           {students}
         </span>
       </div>
 
-      {/* progress bar */}
-      <div className="mt-2 h-2 rounded-full bg-[#e5eefc]">
+      <div className="mt-2 h-2 rounded-full bg-[#e5eefc] overflow-hidden">
         <div
-          className="h-2 rounded-full bg-[#0B5CD7] transition-[width]"
+          className="h-2 rounded-full bg-[#0B5CD7] transition-all duration-700"
           style={{ width: `${percent}%` }}
         />
       </div>
 
       <div className="mt-2 flex items-center justify-between text-sm text-neutral-600">
         <span>{percent}% complete</span>
-        <span>Next deadline: {nextDeadline}</span>
+        <span className="truncate max-w-[120px]">Next: {nextDeadline}</span>
       </div>
     </div>
-  )
+  );
 }
 
-function Activity({ kind, title, meta }: { kind: 'ok' | 'warn'; title: string; meta: string }) {
-  const dot = kind === 'ok' ? 'bg-green-600' : 'bg-amber-500'
+function Activity({ kind, title, meta }: { kind: "ok" | "warn"; title: string; meta: string }) {
+  const dot = kind === "ok" ? "bg-green-600" : "bg-amber-500";
   return (
-    <li className="flex items-start justify-between">
-      <div className="flex items-start gap-3">
-        <span className={`mt-1 h-2 w-2 rounded-full ${dot}`} />
-        <div>
-          <div className="font-medium text-neutral-900">{title}</div>
-          <div className="text-sm text-neutral-600">{meta}</div>
-        </div>
+    <li className="flex items-start gap-3">
+      <span className={`mt-1 h-2 w-2 rounded-full ${dot} flex-shrink-0`} />
+      <div className="flex-1 min-w-0">
+        <div className="font-medium text-neutral-900 truncate">{title}</div>
+        <div className="text-sm text-neutral-600">{meta}</div>
       </div>
     </li>
-  )
+  );
 }
 
 function EmptyHint({ text }: { text: string }) {
   return (
-    <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-4 text-sm text-neutral-600">
+    <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-6 text-center text-sm text-neutral-600">
       {text}
     </div>
-  )
+  );
 }
 
-/* ————— helpers ————— */
-
-function clampPercent(n: number | null | undefined) {
-  if (typeof n !== 'number' || Number.isNaN(n)) return 0
-  return Math.max(0, Math.min(100, Math.round(n)))
+function SkeletonCourseList() {
+  return (
+    <div className="space-y-6">
+      {[1, 2].map((i) => (
+        <div key={i} className="space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="h-5 w-44 bg-neutral-100 rounded animate-pulse" />
+            <div className="h-5 w-20 bg-neutral-100 rounded animate-pulse" />
+          </div>
+          <div className="h-2 w-full bg-neutral-100 rounded animate-pulse" />
+          <div className="flex justify-between">
+            <div className="h-4 w-16 bg-neutral-100 rounded animate-pulse" />
+            <div className="h-4 w-24 bg-neutral-100 rounded animate-pulse" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
-function formatAverage(avg: number | null | undefined) {
-  if (avg == null) return '—'
-  const n = clampPercent(avg)
-  if (n >= 90) return 'A'
-  if (n >= 85) return 'A-'
-  if (n >= 80) return 'B+'
-  if (n >= 75) return 'B'
-  if (n >= 70) return 'B-'
-  if (n >= 65) return 'C+'
-  if (n >= 60) return 'C'
-  if (n >= 50) return 'D'
-  return 'F'
+function SkeletonActivityList() {
+  return (
+    <ul className="space-y-5">
+      {[1, 2, 3].map((i) => (
+        <li key={i} className="flex items-start gap-3">
+          <div className="mt-1 h-2 w-2 rounded-full bg-neutral-200 animate-pulse" />
+          <div className="flex-1 space-y-2">
+            <div className="h-4 w-full max-w-md bg-neutral-100 rounded animate-pulse" />
+            <div className="h-3 w-20 bg-neutral-100 rounded animate-pulse" />
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
 }
 
-export default InstructorDashboard
+/* ————— Helpers ————— */
+function clampPercent(n: number | null | undefined): number {
+  if (typeof n !== "number" || Number.isNaN(n)) return 0;
+  return Math.max(0, Math.min(100, Math.round(n)));
+}
+
+function formatAverage(avg: number | null | undefined): string {
+  if (avg == null) return "—";
+  const n = clampPercent(avg);
+  if (n >= 90) return "A";
+  if (n >= 85) return "A-";
+  if (n >= 80) return "B+";
+  if (n >= 75) return "B";
+  if (n >= 70) return "B-";
+  if (n >= 65) return "C+";
+  if (n >= 60) return "C";
+  if (n >= 50) return "D";
+  return "F";
+}

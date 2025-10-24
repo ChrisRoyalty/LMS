@@ -7,6 +7,7 @@ import { Eye, EyeOff, Plus, X } from 'lucide-react'
 import { api } from '../../lib/api'
 import { showToast } from '../../lib/toast'
 import { createPortal } from 'react-dom'
+import { log } from 'console'
 
 type Role = { id: string; name: string }
 type Batch = { id: string; name: string }
@@ -94,6 +95,8 @@ export default function Settings() {
     try {
       const { data } = await api.get('/api/admin/batches')
       setBatches(Array.isArray(data) ? data : [])
+      console.log(data);
+      
     } catch (e: any) {
       showToast({ kind: 'error', title: 'Could not load batches', message: e?.response?.data?.message || 'Please try again.' })
     } finally { setBatchesLoading(false) }

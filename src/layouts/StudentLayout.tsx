@@ -39,34 +39,71 @@ export default function StudentLayout() {
   const [pendingAssignments, setPendingAssignments] = useState<number>(2)
 
   // (optional) try to hydrate counts from student dashboard; silently ignore if endpoint not ready
-  useEffect(() => {
-    const controller = new AbortController()
-    ;(async () => {
-      try {
-        const base = import.meta.env.VITE_API_BASE_URL as string
-        if (!base) return
-        const token =
-          localStorage.getItem('access_token') ||
-          localStorage.getItem('token') ||
-          sessionStorage.getItem('access_token') ||
-          ''
-        const res = await fetch(`${base}/api/student/student-dashboard`, {
+  // (optional) hydrate counts and insights from new student dashboard endpoint
+useEffect(() => {
+  const controller = new AbortController();
+  (async () => {
+    try {
+      const base = import.meta.env.VITE_API_BASE_URL as string;
+      const token =
+        localStorage.getItem("access_token") ||
+        localStorage.getItem("token") ||
+        sessionStorage.getItem("access_token") ||
+        "";
+
+      const studentId =
+        (user as any)?.id ||
+        (user as any)?.userId ||
+        (user as any)?._id;
+
+      if (!base || !studentId) return;
+
+      const res = await fetch(
+        `${base}/api/students/student-dashboard/${studentId}`,
+        {
           headers: {
-            'Content-Type': 'application/json',
+            "Content-Type": "application/json",
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
           signal: controller.signal,
-        })
-        if (!res.ok) return
-        const j = (await res.json()) as DashboardMini & Record<string, any>
-        const c = (j.activeCourses ?? j.totalCourses ?? j.curriculum?.length ?? 3) as number
-        const p = (j.pendingAssignments ?? j.totalPendingAssignments ?? 2) as number
-        setCoursesCount(Number(c || 0))
-        setPendingAssignments(Number(p || 0))
-      } catch {}
-    })()
-    return () => controller.abort()
-  }, [])
+        }
+      );
+
+      if (!res.ok) {
+        console.warn(
+          `[StudentDashboard] Failed to fetch dashboard data (${res.status})`
+        );
+        return;
+      }
+
+      const j = await res.json();
+
+      // Expected shape:
+      // {
+      //   success: true,
+      //   pendingAssignments: 0,
+      //   averageGrade: "A",
+      //   submissionRate: "1/3",
+      //   upcomingDeadlines: [...],
+      //   recentActivity: [...]
+      // }
+
+      const pending = Number(j.pendingAssignments ?? 0);
+      setPendingAssignments(pending);
+
+      // you can also hydrate average grade or progress in future
+      // const average = j.averageGrade ?? "-";
+      // const submissionRate = j.submissionRate ?? "-";
+
+      console.log("[StudentDashboard] hydrated data:", j);
+    } catch (err) {
+      console.error("[StudentDashboard] error fetching data:", err);
+    }
+  })();
+
+  return () => controller.abort();
+}, [user]);
+
 
   // user popover
   const [userOpen, setUserOpen] = useState(false)
@@ -86,9 +123,9 @@ export default function StudentLayout() {
   const NAV: NavItem[] = useMemo(
     () => [
       { to: '/student', label: 'Dashboard', icon: LayoutDashboard },
-      { to: '/student/courses', label: 'My Courses', icon: BookOpen, count: coursesCount },
-      { to: '/student/assignments', label: 'Assignments', icon: Notebook, count: pendingAssignments },
-      { to: '/student/grades', label: 'Grades & Progress', icon: BarChart3 },
+      // { to: '/student/courses', label: 'My Courses', icon: BookOpen, count: coursesCount },
+      { to: '/student/assignments', label: 'Assignments', icon: Notebook,  },
+      // { to: '/student/grades', label: 'Grades & Progress', icon: BarChart3 },
       { to: '/student/announcements', label: 'Announcements', icon: Megaphone },
     ],
     [coursesCount, pendingAssignments]

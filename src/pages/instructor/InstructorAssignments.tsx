@@ -1,529 +1,702 @@
-import React, { useEffect, useMemo, useState, memo, useCallback } from 'react'
-import { Plus, Search, SquarePen, Check, ChevronDown, X, Trash2 } from 'lucide-react'
-import { api } from '../../lib/api'
-import { showToast } from '../../lib/toast'
-import { createPortal } from 'react-dom'
+"use client";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
+import {
+  Plus,
+  Search,
+  Check,
+  ChevronDown,
+  X,
+  SquarePen,
+  Trash2,
+} from "lucide-react";
+import { api } from "../../lib/api";
+import { showToast } from "../../lib/toast";
+import { getUser } from '../../lib/storage';
 
-type Course = { id: string; title: string }
+/* ---------------- Types ---------------- */
+type Course = { id: string; title: string; instructors?: any[] };
+type AssignmentType = "QUIZ" | "PROJECT" | "HOMEWORK" | "CAPSTONE";
+type AssignmentStatus = "Active" | "Completed" | "Need Grading" | "Draft";
 type Assignment = {
-  id: string
-  title: string
-  description?: string
-  courseId: string
-  courseTitle?: string
-  deadline?: string
-  maxScore?: number
-  assignmentType?: 'ASSIGNMENT' | 'QUIZ' | 'PROJECT' | 'CAPSTONE'
-  status?: 'Active' | 'Completed' | 'Draft'
-  submissions?: number
+  id: string;
+  title: string;
+  description?: string;
+  courseId: string;
+  courseTitle?: string;
+  deadline: string;
+  maxScore?: number;
+  assignmentType: AssignmentType;
+  submissions?: number;
+  total?: number;
+  status?: AssignmentStatus;
+};
+
+/* ---------------- Hook: Debounce ---------------- */
+function useDebounce<T>(value: T, delay = 300): T {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return v;
 }
+// TODO: Replace with dynamic user data from context or localStorage
+const me = getUser();
+const instructorId = me?.id ?? null;
 
+
+/* ---------------- Instructor Assignments Page ---------------- */
 export default function InstructorAssignments() {
-  const [courses, setCourses] = useState<Course[]>([])
-  const [rows, setRows] = useState<Assignment[]>([])
-  const [query, setQuery] = useState('')
+  const [courses, setCourses] = useState<Course[]>([]);
+  const [courseId, setCourseId] = useState<string>("");
+  const [rows, setRows] = useState<Assignment[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<"all" | "active" | "graded" | "submitted">("all");
+  const [q, setQ] = useState("");
+  const dq = useDebounce(q, 250);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState<Assignment | null>(null);
+  const [deleteId, setDeleteId] = useState<string | null>(null);
+  const [working, setWorking] = useState(false);
+  const [viewOpen, setViewOpen] = useState<Assignment | null>(null);
 
-  const [createOpen, setCreateOpen] = useState(false)
-  const [editOpen, setEditOpen] = useState(false)
-
-  // IMPORTANT: split flags — listLoading never blocks inputs; working only during mutations
-  const [listLoading, setListLoading] = useState(true)
-  const [working, setWorking] = useState(false)
-  const [deletingId, setDeletingId] = useState<string | null>(null)
-
-  // create form
-  const [cTitle, setCTitle] = useState('')
-  const [cCourseId, setCCourseId] = useState('')
-  const [cType, setCType] = useState<'ASSIGNMENT' | 'QUIZ' | 'PROJECT' | 'CAPSTONE' | ''>('')
-  const [cDeadline, setCDeadline] = useState('')
-  const [cDesc, setCDesc] = useState('')
-  const [cMax, setCMax] = useState<number | ''>('')
-
-  // edit form
-  const [eId, setEId] = useState<string>('')
-  const [eTitle, setETitle] = useState('')
-  const [eCourseId, setECourseId] = useState('')
-  const [eType, setEType] = useState<'ASSIGNMENT' | 'QUIZ' | 'PROJECT' | 'CAPSTONE' | ''>('')
-  const [eDeadline, setEDeadline] = useState('')
-  const [eDesc, setEDesc] = useState('')
-  const [eMax, setEMax] = useState<number | ''>('')
-
-  function authHeaders() {
-    const token =
-      localStorage.getItem('access_token') ||
-      localStorage.getItem('token') ||
-      sessionStorage.getItem('access_token') ||
-      ''
-    return token ? { Authorization: `Bearer ${token}` } : {}
-  }
 
   useEffect(() => {
-    setListLoading(true)
+    const token = localStorage.getItem("token");
+    if (!token) {
+      console.warn("[Courses] No token found, skipping fetch");
+      showToast({
+        kind: "error",
+        title: "Authentication Error",
+        message: "Please log in to view courses",
+      });
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    console.log("[Courses] Fetching courses...");
     api
-      .get('/api/courses/all-courses', { headers: { ...authHeaders() } })
-      .then(({ data }) => {
-        const list: Course[] = Array.isArray(data) ? data.map((c: any) => ({ id: c.id, title: c.title })) : []
-        setCourses(list)
-      })
-      .catch((e) => {
-        const msg = e?.response?.status === 403 ? 'Forbidden: insufficient role' : e?.response?.data?.message || 'Please try again.'
-        showToast({ kind: 'error', title: 'Could not load courses', message: msg })
-      })
-      .finally(() => setListLoading(false))
-  }, [])
-
-  // Memoize filtered *inside* the table section to avoid recompute during modal typing.
-  // Here we just keep rows & query in parent.
-
-  /* ------------ Handlers (useCallback to keep stable identities) ------------ */
-  const openCreate = useCallback(() => {
-    setCTitle(''); setCCourseId(''); setCType(''); setCDeadline(''); setCDesc(''); setCMax('')
-    setCreateOpen(true)
-  }, [])
-
-  const openEdit = useCallback((a: Assignment) => {
-    setEId(a.id)
-    setETitle(a.title)
-    setECourseId(a.courseId)
-    setEType(((a.assignmentType as any) || '').toUpperCase() as any)
-    setEDeadline(a.deadline ? toDateOnly(a.deadline) : '')
-    setEDesc(a.description || '')
-    setEMax(typeof a.maxScore === 'number' ? a.maxScore : '')
-    setEditOpen(true)
-  }, [])
-
-  const onCreate = useCallback(async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!cTitle || !cCourseId || !cType || !cDeadline) {
-      showToast({ kind: 'warning', title: 'Missing fields', message: 'Please fill title, course, type and due date.' })
-      return
-    }
-    setWorking(true)
-    try {
-      const payload = {
-        title: cTitle,
-        description: cDesc || undefined,
-        courseId: cCourseId,
-        deadline: cDeadline, // YYYY-MM-DD
-        maxScore: cMax === '' ? undefined : Number(cMax),
-        assignmentType: String(cType).toUpperCase() as Assignment['assignmentType'],
-      }
-      const { data } = await api.post('/api/assignments/create-assignment', payload, { headers: { ...authHeaders() } })
-      const created = data?.assignment as any
-      const courseTitle = courses.find((c) => c.id === created?.courseId)?.title
-      setRows((prev) => [
-        {
-          id: created?.id,
-          title: created?.title,
-          description: created?.description,
-          courseId: created?.courseId,
-          courseTitle,
-          deadline: toDateOnly(created?.deadline),
-          maxScore: created?.maxScore,
-          assignmentType: (created?.assignmentType || 'ASSIGNMENT') as any,
-          status: 'Active',
-          submissions: 0,
+      .get("/api/courses/all-courses", {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Cache-Control": "no-cache",
         },
-        ...prev,
-      ])
-      showToast({ kind: 'success', title: 'Assignment created', message: data?.message || 'Saved successfully.' })
-      setCreateOpen(false)
-    } catch (err: any) {
-      const msg = err?.response?.status === 403 ? 'Forbidden: insufficient role' : err?.response?.data?.message || 'Please try again.'
-      showToast({ kind: 'error', title: 'Create failed', message: msg })
-    } finally {
-      setWorking(false)
-    }
-  }, [cTitle, cCourseId, cType, cDeadline, cDesc, cMax, courses])
+        params: { _t: Date.now() }, // Cache-busting
+      })
+      .then((res) => {
+        console.log("[Courses] Response:", res.data);
+        const payload = res.data;
+        const list: any[] = Array.isArray(payload?.courses)
+          ? payload.courses
+          : Array.isArray(payload)
+          ? payload
+          : [];
+        const mapped: Course[] = (list || []).map((c) => ({
+          id: String(c.id),
+          title: String(c.title),
+          instructors: c.instructors || [],
+        }));
+        setCourses(mapped);
+        if (!courseId && mapped.length) {
+          console.log("[Courses] Setting courseId to:", mapped[0].id);
+          setCourseId(mapped[0].id);
+        }
+        if (!mapped.length) {
+          console.warn("[Courses] No courses found");
+          showToast({
+            kind: "warning",
+            title: "No Courses",
+            message: "No courses available to display assignments",
+          });
+        }
+      })
+      .catch((err) => {
+        console.error("[Courses] Load error:", err);
+        showToast({
+          kind: "error",
+          title: "Failed to load courses",
+          message: err?.response?.data?.message || "Please try again",
+        });
+        setCourses([]);
+      })
+      .finally(() => {
+        console.log("[Courses] Fetch complete");
+        setLoading(false);
+      });
+  }, []);
 
-  const onEdit = useCallback(async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!eId || !eTitle || !eCourseId || !eType || !eDeadline) {
-      showToast({ kind: 'warning', title: 'Missing fields', message: 'Please fill title, course, type and due date.' })
-      return
-    }
-    setWorking(true)
+  /* --- Load assignments when course changes --- */
+  useEffect(() => {
+  const token = localStorage.getItem("token");
+  if (!token) {
+    showToast({
+      kind: "error",
+      title: "Authentication Error",
+      message: "Please log in to view assignments",
+    });
+    setLoading(false);
+    return;
+  }
+
+  async function fetchAssignments() {
     try {
-      const payload = {
-        title: eTitle,
-        description: eDesc || undefined,
-        courseId: eCourseId,
-        deadline: eDeadline, // YYYY-MM-DD
-        maxScore: eMax === '' ? undefined : Number(eMax),
-        assignmentType: String(eType).toUpperCase() as Assignment['assignmentType'],
+      setLoading(true);
+
+      let endpoint = "";
+      if (tab === "all" || tab === "active") {
+        // default route (by course)
+        if (!courseId) {
+          console.log("[Assignments] No courseId, skipping fetch");
+          setLoading(false);
+          return;
+        }
+        endpoint = `/api/assignments/assignments/${courseId}`;
+      } else if (tab === "submitted") {
+        // assignments needing grading
+        endpoint = `/api/assignments/assignments/${instructorId}`;
+      } else if (tab === "graded") {
+        // graded assignments
+        endpoint = `/api/assignments/overview/${instructorId}?filter=graded`;
       }
-      const { data } = await api.put(`/api/assignments/edit-assignment/${eId}`, payload, { headers: { ...authHeaders() } })
-      const updated = data?.date || null
-      setRows((prev) =>
-        prev.map((r) =>
-          r.id === eId
-            ? {
-                ...r,
-                title: updated?.title ?? eTitle,
-                description: updated?.description ?? (eDesc || undefined),
-                courseId: updated?.courseId ?? eCourseId,
-                courseTitle: courses.find((c) => c.id === (updated?.courseId ?? eCourseId))?.title,
-                deadline: toDateOnly(updated?.deadline ?? eDeadline),
-                maxScore: typeof (updated?.maxScore ?? eMax) === 'number' ? (updated?.maxScore ?? Number(eMax)) : undefined,
-                assignmentType: ((updated?.assignmentType ?? eType) as any),
-              }
-            : r,
-        ),
-      )
-      showToast({ kind: 'success', title: 'Assignment updated', message: data?.message || 'Changes saved.' })
-      setEditOpen(false)
-    } catch (err: any) {
-      const msg = err?.response?.status === 403 ? 'Forbidden: insufficient role' : err?.response?.data?.message || 'Please try again.'
-      showToast({ kind: 'error', title: 'Update failed', message: msg })
-    } finally {
-      setWorking(false)
-    }
-  }, [eId, eTitle, eCourseId, eType, eDeadline, eDesc, eMax, courses])
 
-  const onDelete = useCallback(async (id: string) => {
-    const ok = window.confirm('Delete this assignment? This cannot be undone.')
-    if (!ok) return
-    setWorking(true)
-    setDeletingId(id)
+      console.log(`[Assignments] Fetching: ${endpoint}`);
+      const res = await api.get(endpoint, {
+        headers: { Authorization: `Bearer ${token}` },
+        params: { _t: Date.now() },
+      });
+      console.log("[Assignments] Response:", res.data);
+
+      const payload = res.data;
+      const list: any[] =
+        payload?.data ??
+        payload?.assignments ??
+        (Array.isArray(payload) ? payload : []);
+
+      const mapped: Assignment[] = (list || []).map((a) => ({
+        id: String(a.id ?? crypto.randomUUID()),
+        title: String(a.title ?? "Untitled"),
+        description: a.description ?? "",
+        courseId: String(a.courseId ?? courseId),
+        courseTitle: a.courseTitle || "",
+        deadline: String(a.deadline ?? "").slice(0, 10),
+        maxScore: a.maxScore ?? undefined,
+        assignmentType: String(a.assignmentType ?? "HOMEWORK").toUpperCase() as AssignmentType,
+        submissions: Number(a.submissions ?? 0),
+        total: Number(a.total ?? 25),
+        status:
+          tab === "submitted"
+            ? "Need Grading"
+            : tab === "graded"
+            ? "Completed"
+            : "Active",
+      }));
+
+      setRows(mapped);
+    } catch (err: any) {
+      console.error("[Assignments] Load error:", err);
+      showToast({
+        kind: "error",
+        title: "Failed to load assignments",
+        message: err?.response?.data?.message || "Please try again",
+      });
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  void fetchAssignments();
+}, [tab, courseId]);
+
+
+  /* --- Delete Assignment --- */
+  const handleDelete = useCallback(async () => {
+    if (!deleteId) return;
+    const token = localStorage.getItem("token");
+    if (!token) {
+      showToast({
+        kind: "error",
+        title: "Authentication Error",
+        message: "Please log in to delete assignments",
+      });
+      setDeleteId(null);
+      return;
+    }
+
+    setWorking(true);
+    console.log("[Delete] Deleting assignment:", deleteId);
     try {
-      await api.delete(`/api/assignments/delete-assignment/${id}`, { headers: { ...authHeaders() } })
-      setRows(prev => prev.filter(r => r.id !== id))
-      showToast({ kind: 'success', title: 'Assignment deleted', message: 'Removed successfully.' })
+      const res = await api.delete(`/api/assignments/delete-assignment/${deleteId}`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Cache-Control": "no-cache",
+        },
+        params: { _t: Date.now() },
+      });
+      console.log("[Delete] Response:", res.data);
+      setRows((prev) => prev.filter((r) => r.id !== deleteId));
+      showToast({
+        kind: "success",
+        title: "Assignment Deleted",
+        message: "The assignment has been successfully deleted.",
+      });
+      setDeleteId(null);
     } catch (err: any) {
-      const msg = err?.response?.status === 403 ? 'Forbidden: insufficient role' : err?.response?.data?.message || 'Please try again.'
-      showToast({ kind: 'error', title: 'Delete failed', message: msg })
+      console.error("[Delete] Error:", err);
+      showToast({
+        kind: "error",
+        title: "Failed to delete assignment",
+        message: err?.response?.data?.message || "Please try again",
+      });
     } finally {
-      setDeletingId(null)
-      setWorking(false)
+      setWorking(false);
     }
-  }, [])
+  }, [deleteId]);
 
-  const showOverlay = working
+  /* --- Create --- */
+  const handleCreate = useCallback(
+    async (form: {
+      title: string;
+      description?: string;
+      courseId: string;
+      deadline: string;
+      maxScore?: number;
+      assignmentType: AssignmentType;
+    }) => {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        showToast({
+          kind: "error",
+          title: "Authentication Error",
+          message: "Please log in to create assignments",
+        });
+        return;
+      }
 
+      setWorking(true);
+      console.log("[Create] Creating assignment:", form);
+      try {
+        const res = await api.post(
+          "/api/assignments/create-assignment",
+          {
+            ...form,
+            assignmentType: form.assignmentType.toUpperCase(),
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Cache-Control": "no-cache",
+            },
+            params: { _t: Date.now() },
+          }
+        );
+        console.log("[Create] Response:", res.data);
+        const out = res.data;
+        const a = out?.assignment || out?.data || {};
+        const courseTitle =
+          courses.find((c) => c.id === form.courseId)?.title || "";
+        const newRow: Assignment = {
+          id: String(a.id ?? crypto.randomUUID()),
+          title: a.title ?? form.title,
+          description: a.description ?? form.description ?? "",
+          courseId: a.courseId ?? form.courseId,
+          courseTitle,
+          deadline: String(a.deadline ?? form.deadline).slice(0, 10),
+          maxScore: a.maxScore ?? form.maxScore,
+          assignmentType: String(a.assignmentType ?? form.assignmentType).toUpperCase() as AssignmentType,
+          submissions: 0,
+          total: 25,
+          status: a.status ? (String(a.status) as AssignmentStatus) : "Active",
+        };
+        setRows((prev) => [newRow, ...prev]);
+        showToast({
+          kind: "success",
+          title: "Assignment Created",
+          message: "Your assignment has been successfully created.",
+        });
+        setCreateOpen(false);
+      } catch (err: any) {
+        console.error("[Create] Error:", err);
+        showToast({
+          kind: "error",
+          title: "Failed to create assignment",
+          message: err?.response?.data?.message || "Please try again",
+        });
+      } finally {
+        setWorking(false);
+      }
+    },
+    [courses]
+  );
+
+  /* --- Edit --- */
+  const handleEdit = useCallback(
+    async (
+      id: string,
+      form: {
+        title: string;
+        description?: string;
+        courseId: string;
+        deadline: string;
+        maxScore?: number;
+        assignmentType: AssignmentType;
+      }
+    ) => {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        showToast({
+          kind: "error",
+          title: "Authentication Error",
+          message: "Please log in to edit assignments",
+        });
+        return;
+      }
+
+      setWorking(true);
+      console.log("[Edit] Editing assignment:", id, form);
+      try {
+        const res = await api.put(
+          `/api/assignments/edit-assignment/${id}`,
+          {
+            ...form,
+            assignmentType: form.assignmentType.toUpperCase(),
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Cache-Control": "no-cache",
+            },
+            params: { _t: Date.now() },
+          }
+        );
+        console.log("[Edit] Response:", res.data);
+        const out = res.data;
+        const updated = out?.assignment || out?.data || null;
+        setRows((prev) =>
+          prev.map((r) =>
+            r.id === id
+              ? {
+                  ...r,
+                  title: updated?.title ?? form.title,
+                  description: updated?.description ?? form.description,
+                  courseId: updated?.courseId ?? form.courseId,
+                  courseTitle: courses.find(
+                    (c) => c.id === (updated?.courseId ?? form.courseId)
+                  )?.title,
+                  deadline: String(updated?.deadline ?? form.deadline).slice(0, 10),
+                  maxScore: updated?.maxScore ?? form.maxScore,
+                  assignmentType: String(
+                    updated?.assignmentType ?? form.assignmentType
+                  ).toUpperCase() as AssignmentType,
+                  status: updated?.status
+                    ? (String(updated.status) as AssignmentStatus)
+                    : r.status,
+                }
+              : r
+          )
+        );
+        showToast({
+          kind: "success",
+          title: "Assignment Updated",
+          message: "Your assignment has been updated successfully.",
+        });
+        setEditOpen(null);
+      } catch (err: any) {
+        console.error("[Edit] Error:", err);
+        showToast({
+          kind: "error",
+          title: "Failed to update assignment",
+          message: err?.response?.data?.message || "Please try again",
+        });
+      } finally {
+        setWorking(false);
+      }
+    },
+    [courses]
+  );
+
+  /* --- Filter logic --- */
+  const filtered = useMemo(() => {
+    let list = rows;
+    if (tab === "active") list = list.filter((r) => r.status === "Active");
+    if (tab === "graded") list = list.filter((r) => r.status === "Completed");
+    if (tab === "submitted") list = list.filter((r) => r.status === "Need Grading");
+
+
+    const term = dq.trim().toLowerCase();
+    if (!term) return list;
+    return list.filter((r) =>
+      [r.title, r.assignmentType, r.deadline, r.courseTitle].some((v) =>
+        v?.toString().toLowerCase().includes(term)
+      )
+    );
+  }, [rows, tab, dq]);
+
+  /* ----------------- Render ----------------- */
   return (
     <>
       <div className="space-y-4 max-w-[1200px] mx-auto">
+        {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-2xl sm:text-[22px] font-semibold text-neutral-900">Assignment Management</h2>
-            <p className="text-sm text-neutral-500">Create and manage assignments for your courses</p>
+            <h2 className="text-2xl font-semibold text-neutral-900">
+              Assignment Management
+            </h2>
+            <p className="text-sm text-neutral-500">
+              Create and manage assignments for your courses
+            </p>
           </div>
           <button
-            onClick={openCreate}
-            className="inline-flex items-center gap-2 rounded-xl bg-[#0B5CD7] px-4 py-2 text-white hover:brightness-95"
+            onClick={() => setCreateOpen(true)}
+            className="inline-flex items-center gap-2 rounded-xl bg-[#0B5CD7] px-4 py-2 text-white hover:brightness-95 disabled:opacity-60"
+            disabled={working || !courses.length}
           >
             <Plus className="h-4 w-4" />
             Create Assignment
           </button>
         </div>
 
-        <div className="rounded-2xl border border-neutral-200 bg-white">
-          {/* Filters row */}
-          <div className="flex flex-col gap-3 p-3 sm:p-4">
+        {/* Filters */}
+        <div className="rounded-2xl border border-neutral-200 bg-white p-4 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <div className="relative max-w-lg">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-neutral-400" />
               <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
                 placeholder="Search assignments..."
-                className="h-12 w-full rounded-2xl border border-neutral-200 bg-[#F4F5F7] pl-10 pr-3 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-[#0B5CD7] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#0B5CD7]/20"
-                aria-label="Search assignments"
+                className="h-12 w-full rounded-2xl border border-neutral-200 bg-[#F4F5F7] pl-10 pr-3 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-[#0B5CD7] focus:bg-white focus:ring-2 focus:ring-[#0B5CD7]/20 outline-none"
+                disabled={working}
               />
             </div>
-
-            <div className="flex flex-wrap gap-2">
-              <Pill>All Assignments</Pill>
-              <Pill>Active</Pill>
-              <Pill>Completed</Pill>
-              <Pill>Need Grading</Pill>
+            <div className="w-full sm:w-80">
+              <HeadlessSelect
+                value={courseId}
+                onChange={setCourseId}
+                placeholder={
+                  courses.length ? "Filter by course" : "No courses found"
+                }
+                options={courses.map((c) => ({ value: c.id, label: c.title }))}
+                disabled={working || !courses.length}
+              />
             </div>
           </div>
 
-          {/* Table */}
-          <div className="px-3 pb-3 sm:px-4 sm:pb-4">
-            <TableSection
-              rows={rows}
-              query={query}
-              courses={courses}
-              listLoading={listLoading}
-              openEdit={openEdit}
-              onDelete={onDelete}
-              working={working}
-              deletingId={deletingId}
-            />
-          </div>
+          {["all", "active", "graded", "submitted"].map((t) => (
+  <TabPill
+    key={t}
+    active={tab === t}
+    onClick={() => setTab(t as any)}
+    disabled={working}
+  >
+    {t === "submitted"
+      ? "Submitted"
+      : t.charAt(0).toUpperCase() + t.slice(1)}
+  </TabPill>
+          ))}
+
+
+        </div>
+
+        {/* Table */}
+        <div className="rounded-2xl border border-neutral-200 bg-white p-4 overflow-x-auto">
+          <table className="w-full min-w-[900px]">
+            <thead>
+              <tr className="text-left text-neutral-700">
+                <Th>Assignment</Th>
+                <Th>Course</Th>
+                <Th>Type</Th>
+                <Th>Deadline</Th>
+                <Th>Submissions</Th>
+                <Th>Status</Th>
+                <Th className="text-center">Actions</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading ? (
+                <SkRows rows={5} cols={7} />
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="py-10 text-center text-neutral-500">
+                    No assignments found.
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((a) => (
+                  <tr key={a.id} className="border-b border-neutral-200 last:border-0">
+                    <Td>
+                    <button
+                      className="text-[#0B5CD7] hover:underline"
+                      onClick={() => setViewOpen(a)}
+                    >
+                      {a.title}
+                    </button>
+                  </Td>
+
+
+                    <Td>
+                      {a.courseTitle ||
+                        courses.find((c) => c.id === a.courseId)?.title ||
+                        "—"}
+                    </Td>
+                    <Td>
+                      <span className="inline-flex items-center rounded-md bg-neutral-100 px-2 py-0.5 text-xs text-neutral-700">
+                        {a.assignmentType}
+                      </span>
+                    </Td>
+                    <Td>{a.deadline}</Td>
+                    <Td>
+                      <span className="text-sm text-neutral-600">
+                        {a.submissions ?? 0}/{a.total ?? 25}
+                      </span>
+                    </Td>
+                    <Td>
+                      <StatusPill status={a.status ?? "Active"} />
+                    </Td>
+                    <Td className="text-center">
+                      <button
+                        className="rounded-md p-2 hover:bg-neutral-100"
+                        title="Edit"
+                        onClick={() => setEditOpen(a)}
+                        disabled={working}
+                      >
+                        <SquarePen className="h-4 w-4 text-neutral-700" />
+                      </button>
+                      <button
+                        className="rounded-md p-2 hover:bg-neutral-100"
+                        title="Delete"
+                        onClick={() => setDeleteId(a.id)}
+                        disabled={working}
+                      >
+                        <Trash2 className="h-4 w-4 text-rose-600" />
+                      </button>
+                    </Td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
 
-      {/* Create Modal */}
+      {/* Modals */}
       {createOpen && (
-        <Modal title="Create New Assignment" subtext="Create a new assignment for your students" onClose={() => !working && setCreateOpen(false)}>
-          <form onSubmit={onCreate} className="space-y-4">
-            <Field label="Title">
-              <input
-                className="input"
-                placeholder="Assignment title"
-                value={cTitle}
-                onChange={(e) => setCTitle(e.target.value)}
-                required
-                autoFocus
-                onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault() }}
-              />
-            </Field>
-
-            <div className="grid sm:grid-cols-2 gap-4">
-              <Field label="Course">
-                <HeadlessSelect
-                  value={cCourseId}
-                  onChange={setCCourseId}
-                  placeholder="Select course"
-                  options={courses.map((c) => ({ value: c.id, label: c.title }))}
-                />
-              </Field>
-
-              <Field label="Type">
-                <HeadlessSelect
-                  value={cType}
-                  onChange={(v) => setCType((String(v).toUpperCase() as any))}
-                  placeholder="Assignment type"
-                  options={[
-                    { value: 'ASSIGNMENT', label: 'Assignment' },
-                    { value: 'PROJECT', label: 'Project' },
-                    { value: 'QUIZ', label: 'Quiz' },
-                    { value: 'CAPSTONE', label: 'Capstone' },
-                  ]}
-                />
-              </Field>
-            </div>
-
-            <div className="grid sm:grid-cols-2 gap-4">
-              <Field label="Due Date">
-                <input className="input" type="date" value={cDeadline} onChange={(e) => setCDeadline(e.target.value)} required />
-              </Field>
-              <Field label="Max Score">
-                <input
-                  className="input"
-                  type="number"
-                  min={0}
-                  placeholder="e.g., 100"
-                  value={cMax}
-                  onChange={(e) => setCMax(e.target.value === '' ? '' : Number(e.target.value))}
-                />
-              </Field>
-            </div>
-
-            <Field label="Description">
-              <textarea
-                className="input min-h-[112px] resize-y"
-                placeholder="Assignment instructions and requirements"
-                value={cDesc}
-                onChange={(e) => setCDesc(e.target.value)}
-              />
-            </Field>
-
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <button type="button" className="btn-secondary" onClick={() => setCreateOpen(false)} disabled={working}>
-                Cancel
-              </button>
-              <button type="submit" className="btn-primary rounded-lg p-2" disabled={working}>
-                Create Assignment
-              </button>
-            </div>
-          </form>
-        </Modal>
+        <AssignmentModal
+          title="Create Assignment"
+          subtext="Create a new assignment for your students"
+          initial={{ courseId, assignmentType: "HOMEWORK" }}
+          onClose={() => !working && setCreateOpen(false)}
+          onSubmit={handleCreate}
+          courses={courses}
+          working={working}
+          submitText="Create Assignment"
+        />
+        
       )}
-
-      {/* Edit Modal */}
+      
       {editOpen && (
-        <Modal title="Edit Assignment" subtext="Update assignment details" onClose={() => !working && setEditOpen(false)}>
-          <form onSubmit={onEdit} className="space-y-4">
-            <Field label="Title">
-              <input
-                className="input"
-                placeholder="Assignment title"
-                value={eTitle}
-                onChange={(e) => setETitle(e.target.value)}
-                required
-                autoFocus
-                onKeyDown={(e) => { if (e.key === 'Enter') e.preventDefault() }}
-              />
-            </Field>
-
-            <div className="grid sm:grid-cols-2 gap-4">
-              <Field label="Course">
-                <HeadlessSelect
-                  value={eCourseId}
-                  onChange={setECourseId}
-                  placeholder="Select course"
-                  options={courses.map((c) => ({ value: c.id, label: c.title }))}
-                />
-              </Field>
-
-              <Field label="Type">
-                <HeadlessSelect
-                  value={eType}
-                  onChange={(v) => setEType((String(v).toUpperCase() as any))}
-                  placeholder="Assignment type"
-                  options={[
-                    { value: 'ASSIGNMENT', label: 'Assignment' },
-                    { value: 'PROJECT', label: 'Project' },
-                    { value: 'QUIZ', label: 'Quiz' },
-                    { value: 'CAPSTONE', label: 'Capstone' },
-                  ]}
-                />
-              </Field>
-            </div>
-
-            <div className="grid sm:grid-cols-2 gap-4">
-              <Field label="Due Date">
-                <input className="input" type="date" value={eDeadline} onChange={(e) => setEDeadline(e.target.value)} required />
-              </Field>
-              <Field label="Max Score">
-                <input
-                  className="input"
-                  type="number"
-                  min={0}
-                  placeholder="e.g., 100"
-                  value={eMax}
-                  onChange={(e) => setEMax(e.target.value === '' ? '' : Number(e.target.value))}
-                />
-              </Field>
-            </div>
-
-            <Field label="Description">
-              <textarea
-                className="input min-h-[112px] resize-y"
-                placeholder="Assignment instructions and requirements"
-                value={eDesc}
-                onChange={(e) => setEDesc(e.target.value)}
-              />
-            </Field>
-
-            <div className="flex items-center justify-end gap-2 pt-2">
-              <button type="button" className="btn-secondary" onClick={() => setEditOpen(false)} disabled={working}>
-                Cancel
-              </button>
-              <button type="submit" className="btn-primary rounded-lg p-2" disabled={working}>
-                Save Changes
-              </button>
-            </div>
-          </form>
+        <AssignmentModal
+          title="Edit Assignment"
+          subtext="Update assignment details"
+          initial={editOpen}
+          onClose={() => !working && setEditOpen(null)}
+          onSubmit={(p: {
+            title: string;
+            description?: string;
+            courseId: string;
+            deadline: string;
+            maxScore?: number;
+            assignmentType: AssignmentType;
+          }) => handleEdit(editOpen.id, p)}
+          courses={courses}
+          working={working}
+          submitText="Save Changes"
+        />
+      )}
+      {deleteId && (
+        <Modal
+          title="Delete Assignment"
+          subtext="Are you sure you want to delete this assignment? This action cannot be undone."
+          onClose={() => !working && setDeleteId(null)}
+        >
+          <div className="flex items-center justify-end gap-2">
+            <button
+              className="inline-flex items-center rounded-xl border border-neutral-300 bg-white px-4 py-2 text-sm text-neutral-800 hover:bg-neutral-50"
+              onClick={() => setDeleteId(null)}
+              disabled={working}
+            >
+              Cancel
+            </button>
+            <button
+              className="inline-flex items-center rounded-xl bg-rose-600 px-4 py-2 text-sm text-white hover:bg-rose-700"
+              onClick={handleDelete}
+              disabled={working}
+            >
+              {working ? "Deleting..." : "Delete"}
+            </button>
+          </div>
         </Modal>
       )}
+      {viewOpen && (
+  <AssignmentDetailsModal
+    assignment={viewOpen}
+    onClose={() => setViewOpen(null)}
+    onGraded={(updated) => {
+      setRows((prev) =>
+        prev.map((r) => (r.id === updated.id ? updated : r))
+      );
+    }}
+  />
+)}
 
-      {/* Mutation overlay (no blur) */}
-      <UltraLoader
-        show={showOverlay}
-        label={
-          working && createOpen ? 'Creating assignment…' :
-          working && editOpen   ? 'Saving changes…'   :
-          working && deletingId ? 'Deleting assignment…' : 'Please wait…'
-        }
-      />
     </>
-  )
+  );
 }
 
-/* ---------------- Table (Memoized) ---------------- */
-const TableSection = memo(function TableSection({
-  rows, query, courses, listLoading, openEdit, onDelete, working, deletingId,
-}: {
-  rows: Assignment[]
-  query: string
-  courses: Course[]
-  listLoading: boolean
-  openEdit: (a: Assignment) => void
-  onDelete: (id: string) => void
-  working: boolean
-  deletingId: string | null
-}) {
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return rows
-    return rows.filter((r) =>
-      [r.title, r.courseTitle, r.assignmentType, r.deadline].filter(Boolean).some((v) => String(v).toLowerCase().includes(q)),
-    )
-  }, [rows, query])
-
+/* ---------------- UI Helpers ---------------- */
+function TabPill({ active, onClick, children, disabled }: any) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full table-fixed border-separate border-spacing-0 min-w-[980px]">
-        <thead>
-          <tr className="text-left text-neutral-700">
-            <Th>Assignment</Th>
-            <Th>Course</Th>
-            <Th>Type</Th>
-            <Th>Due Date</Th>
-            <Th>Submissions</Th>
-            <Th>Status</Th>
-            <Th className="w-28 text-center">Actions</Th>
-          </tr>
-        </thead>
-        <tbody>
-          {listLoading ? (
-            <SkRows cols={7} rows={5} />
-          ) : filtered.length === 0 ? (
-            <tr>
-              <td colSpan={7} className="py-10 text-center text-neutral-500">No assignments yet.</td>
-            </tr>
-          ) : (
-            filtered.map((a) => (
-              <tr key={a.id} className="border-b border-neutral-200 last:border-0">
-                <Td className="font-medium text-neutral-900">{a.title}</Td>
-                <Td>{a.courseTitle || courses.find((c) => c.id === a.courseId)?.title || '-'}</Td>
-                <Td>{prettyType(a.assignmentType)}</Td>
-                <Td>{a.deadline ? a.deadline : '-'}</Td>
-                <Td>{a.submissions ?? 0}</Td>
-                <Td>
-                  {a.status === 'Active' ? (
-                    <span className="inline-flex items-center rounded-full bg-[#0B5CD7] px-2 py-0.5 text-xs text-white">Active</span>
-                  ) : a.status === 'Completed' ? (
-                    <span className="inline-flex items-center rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-700">Completed</span>
-                  ) : (
-                    <span className="inline-flex items-center rounded-full bg-neutral-100 px-2 py-0.5 text-xs text-neutral-700">Draft</span>
-                  )}
-                </Td>
-                <Td className="text-center">
-                  <div className="flex items-center justify-center gap-1.5">
-                    <button className="rounded-md p-2 hover:bg-neutral-100" title="Edit" onClick={() => openEdit(a)}>
-                      <SquarePen className="h-4 w-4 text-neutral-700" />
-                    </button>
-                    <button
-                      className="rounded-md p-2 hover:bg-neutral-100"
-                      title="Delete"
-                      onClick={() => onDelete(a.id)}
-                      disabled={working && deletingId === a.id}
-                    >
-                      <Trash2 className={`h-4 w-4 ${deletingId === a.id ? 'text-rose-400' : 'text-rose-600'}`} />
-                    </button>
-                  </div>
-                </Td>
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
-    </div>
-  )
-})
+    <button
+      onClick={onClick}
+      className={`inline-flex items-center rounded-full border px-3 py-1 text-xs ${
+        active
+          ? "border-neutral-900 bg-neutral-900 text-white"
+          : "border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50"
+      } ${disabled ? "opacity-60 pointer-events-none" : ""}`}
+      disabled={disabled}
+    >
+      {children}
+    </button>
+  );
+}
 
-/* ---------------- Presentational ---------------- */
-function Pill({ children }: { children: React.ReactNode }) {
-  return <span className="inline-flex items-center rounded-full border border-neutral-300 bg-white px-3 py-1 text-xs text-neutral-700">{children}</span>
+function StatusPill({ status }: { status: AssignmentStatus }) {
+  const cls =
+    status === "Active"
+      ? "bg-[#0B5CD7] text-white"
+      : status === "Completed"
+      ? "bg-neutral-100 text-neutral-700"
+      : status === "Need Grading"
+      ? "bg-amber-100 text-amber-800"
+      : "bg-gray-100 text-gray-700";
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs ${cls}`}>
+      {status}
+    </span>
+  );
 }
-function prettyType(t?: Assignment['assignmentType']) {
-  if (!t) return '-'
-  const key = String(t).toUpperCase()
-  const m: any = { ASSIGNMENT: 'Assignment', QUIZ: 'Quiz', PROJECT: 'Project', CAPSTONE: 'Capstone' }
-  return m[key] || key
+
+function Th({ children, className = "" }: any) {
+  return <th className={`py-3 text-sm font-semibold ${className}`}>{children}</th>;
 }
-function Th({ children, className = '' }: { children: React.ReactNode; className?: string }) {
-  return <th className={`py-3 text-sm font-semibold ${className}`}>{children}</th>
+
+function Td({ children, className = "" }: any) {
+  return <td className={`py-3 text-sm text-neutral-700 ${className}`}>{children}</td>;
 }
-function Td({ children, className = '' }: { children: React.ReactNode; className?: string }) {
-  return <td className={`py-3 text-sm text-neutral-700 ${className}`}>{children}</td>
-}
-function SkRows({ cols, rows }: { cols: number; rows: number }) {
+
+function SkRows({ cols, rows }: any) {
   return (
     <>
       {Array.from({ length: rows }).map((_, r) => (
@@ -536,37 +709,51 @@ function SkRows({ cols, rows }: { cols: number; rows: number }) {
         </tr>
       ))}
     </>
-  )
+  );
 }
 
-/* ---------------- Modal (no blur; cheap overlay) ---------------- */
-function Modal({ onClose, title, subtext, children }: { onClose: () => void; title: string; subtext?: string; children: React.ReactNode }) {
-  const el = React.useMemo(() => {
-    const d = document.createElement('div')
-    d.setAttribute('data-modal-root', 'true')
-    return d
-  }, [])
-  useEffect(() => {
-    document.body.appendChild(el)
-    const prev = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
-    window.addEventListener('keydown', onKey)
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      document.body.style.overflow = prev
-      try { document.body.removeChild(el) } catch {}
-    }
-  }, [el, onClose])
+/* ---------------- Modal ---------------- */
+function Modal({
+  title,
+  subtext,
+  onClose,
+  children,
+}: {
+  title: string;
+  subtext?: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  const [root] = useState(() => {
+    const el = document.createElement("div");
+    el.setAttribute("data-modal-root", "true");
+    return el;
+  });
 
-  const node = (
+  useEffect(() => {
+    document.body.appendChild(root);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const esc = (e: KeyboardEvent) => e.key === "Escape"  && onClose();
+    window.addEventListener("keydown", esc);
+    return () => {
+      window.removeEventListener("keydown", esc);
+      document.body.style.overflow = prev;
+      try {
+        document.body.removeChild(root);
+      } catch {}
+    };
+  }, [root, onClose]);
+
+  return createPortal(
     <>
-      <div className="fixed inset-0 z-[10000] h-screen w-screen bg-black/40" onClick={onClose} />
-      <div className="fixed inset-0 z-[10001] grid place-items-center px-4" onClick={onClose}>
+      <div className="fixed inset-0 z-[10000] bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
+      <div
+        className="fixed inset-0 z-[10001] grid place-items-center px-4"
+        onClick={onClose}
+      >
         <div
-          role="dialog"
-          aria-modal="true"
-          className="w-full max-w-2xl rounded-2xl border border-neutral-200 bg-white shadow-xl"
+          className="w-full max-w-xl rounded-2xl border border-neutral-200 bg-white shadow-xl"
           onClick={(e) => e.stopPropagation()}
         >
           <div className="flex items-start justify-between px-6 py-5 border-b border-neutral-200">
@@ -574,99 +761,463 @@ function Modal({ onClose, title, subtext, children }: { onClose: () => void; tit
               <h3 className="text-lg font-semibold">{title}</h3>
               {subtext && <p className="mt-1 text-sm text-neutral-600">{subtext}</p>}
             </div>
-            <button className="rounded-md p-2 hover:bg-neutral-100" onClick={onClose} aria-label="Close">
+            <button
+              className="rounded-md p-2 hover:bg-neutral-100"
+              onClick={onClose}
+              aria-label="Close"
+            >
               <X className="h-5 w-5" />
             </button>
           </div>
-          <div className="px-6 py-5 overflow-visible">{children}</div>
+          <div className="px-6 py-5">{children}</div>
         </div>
       </div>
-    </>
-  )
-  return createPortal(node, el)
+    </>,
+    root
+  );
 }
 
-/* ---------------- Field & Headless Select ---------------- */
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="label">{label}</label>
-      {children}
-    </div>
-  )
+/* ---------------- Assignment Modal ---------------- */
+function AssignmentModal({
+  title,
+  subtext,
+  initial,
+  onClose,
+  onSubmit,
+  courses,
+  working,
+  submitText,
+}: any) {
+  const [form, setForm] = useState({
+    title: initial?.title ?? "",
+    description: initial?.description ?? "",
+    courseId: initial?.courseId ?? "",
+    deadline: (initial?.deadline ?? "").slice(0, 10),
+    assignmentType: initial?.assignmentType ?? "HOMEWORK",
+    maxScore:
+      typeof initial?.maxScore === "number" ? String(initial.maxScore) : "",
+  });
+
+  const canSubmit =
+    form.title.trim() && form.courseId && form.assignmentType && form.deadline;
+
+  const [root] = useState(() => {
+    const el = document.createElement("div");
+    el.setAttribute("data-modal-root", "true");
+    return el;
+  });
+
+  useEffect(() => {
+    document.body.appendChild(root);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && !working && onClose();
+    window.addEventListener("keydown", esc);
+    return () => {
+      window.removeEventListener("keydown", esc);
+      document.body.style.overflow = prev;
+      try {
+        document.body.removeChild(root);
+      } catch {}
+    };
+  }, [root, onClose, working]);
+
+  return createPortal(
+    <>
+      <div className="fixed inset-0 z-[10000] bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
+      <div
+        className="fixed inset-0 z-[10001] grid place-items-center px-4"
+        onClick={onClose}
+      >
+        <div
+          className="w-full max-w-2xl rounded-2xl border border-neutral-200 bg-white shadow-xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-start justify-between px-6 py-5 border-b border-neutral-200">
+            <div>
+              <h3 className="text-lg font-semibold">{title}</h3>
+              {subtext && (
+                <p className="mt-1 text-sm text-neutral-600">{subtext}</p>
+              )}
+            </div>
+            <button
+              className="rounded-md p-2 hover:bg-neutral-100"
+              onClick={onClose}
+              aria-label="Close"
+              disabled={working}
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!canSubmit) {
+                showToast({
+                  kind: "error",
+                  title: "Missing fields",
+                  message: "Please fill all required fields",
+                });
+                return;
+              }
+              console.log("[AssignmentModal] Submitting form:", form);
+              onSubmit({
+                title: form.title.trim(),
+                description: form.description.trim() || undefined,
+                courseId: form.courseId,
+                deadline: form.deadline,
+                maxScore:
+                  form.maxScore === "" ? undefined : Number(form.maxScore),
+                assignmentType: form.assignmentType.toUpperCase(),
+              });
+            }}
+            className="px-6 py-5 space-y-4"
+          >
+            <div>
+              <label className="mb-1 block text-sm font-medium text-neutral-700">
+                Title
+              </label>
+              <input
+                className="h-11 w-full rounded-xl border border-neutral-200 bg-[#F4F5F7] px-3 text-sm focus:border-[#0B5CD7] focus:bg-white focus:ring-2 focus:ring-[#0B5CD7]/20 outline-none"
+                value={form.title}
+                onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))}
+                required
+                disabled={working}
+              />
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-neutral-700">
+                  Course
+                </label>
+                <HeadlessSelect
+                  value={form.courseId}
+                  onChange={(v: string) =>
+                    setForm((p) => ({ ...p, courseId: v }))
+                  }
+                  placeholder="Select course"
+                  options={courses.map((c: Course) => ({
+                    value: c.id,
+                    label: c.title,
+                  }))}
+                  disabled={working || !courses.length}
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-neutral-700">
+                  Type
+                </label>
+                <HeadlessSelect
+                  value={form.assignmentType}
+                  onChange={(v: string) =>
+                    setForm((p) => ({ ...p, assignmentType: v }))
+                  }
+                  placeholder="Assignment type"
+                  options={[
+                    { value: "HOMEWORK", label: "Homework" },
+                    { value: "PROJECT", label: "Project" },
+                    { value: "QUIZ", label: "Quiz" },
+                    { value: "CAPSTONE", label: "Capstone" },
+                  ]}
+                  disabled={working}
+                />
+              </div>
+            </div>
+
+            <div className="grid sm:grid-cols-2 gap-4">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-neutral-700">
+                  Due Date
+                </label>
+                <input
+                  type="date"
+                  className="h-11 w-full rounded-xl border border-neutral-200 bg-[#F4F5F7] px-3 text-sm focus:border-[#0B5CD7] focus:bg-white focus:ring-2 focus:ring-[#0B5CD7]/20 outline-none"
+                  value={form.deadline}
+                  onChange={(e) =>
+                    setForm((p) => ({ ...p, deadline: e.target.value }))
+                  }
+                  required
+                  disabled={working}
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-sm font-medium text-neutral-700">
+                  Max Score
+                </label>
+                <input
+                  type="number"
+                  placeholder="e.g. 100"
+                  className="h-11 w-full rounded-xl border border-neutral-200 bg-[#F4F5F7] px-3 text-sm focus:border-[#0B5CD7] focus:bg-white focus:ring-2 focus:ring-[#0B5CD7]/20 outline-none"
+                  value={form.maxScore}
+                  onChange={(e) =>
+                    setForm((p) => ({ ...p, maxScore: e.target.value }))
+                  }
+                  disabled={working}
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="mb-1 block text-sm font-medium text-neutral-700">
+                Description
+              </label>
+              <textarea
+                className="min-h-[100px] w-full rounded-xl border border-neutral-200 bg-[#F4F5F7] px-3 py-2 text-sm focus:border-[#0B5CD7] focus:bg-white focus:ring-2 focus:ring-[#0B5CD7]/20 outline-none"
+                value={form.description}
+                onChange={(e) =>
+                  setForm((p) => ({ ...p, description: e.target.value }))
+                }
+                disabled={working}
+              />
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                className="inline-flex items-center rounded-xl border border-neutral-300 bg-white px-4 py-2 text-sm text-neutral-800 hover:bg-neutral-50"
+                onClick={onClose}
+                disabled={working}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={!canSubmit || working}
+                className="inline-flex items-center rounded-xl bg-[#0B5CD7] px-4 py-2 text-sm text-white hover:brightness-95 disabled:opacity-60"
+              >
+                {working ? "Saving..." : submitText}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </>,
+    root
+  );
 }
-function HeadlessSelect<T extends string>({ value, onChange, placeholder, options }: {
-  value: T | ''
-  onChange: (v: T) => void
-  placeholder?: string
-  options: { value: T; label: string }[]
+
+function AssignmentDetailsModal({
+  assignment,
+  onClose,
+  onGraded,
+}: {
+  assignment: Assignment;
+  onClose: () => void;
+  onGraded: (updated: Assignment) => void;
 }) {
-  const [open, setOpen] = useState(false)
+  const [working, setWorking] = useState(false);
+  const [score, setScore] = useState<number | ''>('');
+  const [feedback, setFeedback] = useState('');
+  const [root] = useState(() => {
+    const el = document.createElement('div');
+    el.setAttribute('data-modal-root', 'true');
+    return el;
+  });
+
+  useEffect(() => {
+    document.body.appendChild(root);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
+    window.addEventListener('keydown', esc);
+    return () => {
+      window.removeEventListener('keydown', esc);
+      document.body.style.overflow = prev;
+      try { document.body.removeChild(root); } catch {}
+    };
+  }, [root, onClose]);
+
+  async function handleGradeSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (score === '' || !feedback.trim()) {
+      showToast({
+        kind: 'error',
+        title: 'Missing Fields',
+        message: 'Please enter both score and feedback',
+      });
+      return;
+    }
+
+    try {
+      setWorking(true);
+      const token = localStorage.getItem('token');
+      const res = await api.post(
+        `/api/submit/grade/${assignment.id}`,
+        { score, feedback },
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+
+      console.log('[Grade] Response:', res.data);
+      showToast({
+        kind: 'success',
+        title: 'Graded Successfully',
+        message: res.data?.message || 'Assignment graded successfully',
+      });
+
+      onGraded({
+        ...assignment,
+        status: 'Completed',
+      });
+      onClose();
+    } catch (err: any) {
+      console.error('[Grade] Error:', err);
+      showToast({
+        kind: 'error',
+        title: 'Grade Failed',
+        message: err?.response?.data?.message || 'Please try again',
+      });
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  return createPortal(
+    <>
+      <div className="fixed inset-0 z-[10000] bg-black/40 backdrop-blur-[2px]" onClick={onClose} />
+      <div
+        className="fixed inset-0 z-[10001] grid place-items-center px-4"
+        onClick={onClose}
+      >
+        <div
+          className="w-full max-w-lg rounded-2xl border border-neutral-200 bg-white shadow-xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-start justify-between px-6 py-5 border-b border-neutral-200">
+            <div>
+              <h3 className="text-lg font-semibold">{assignment.title}</h3>
+              <p className="mt-1 text-sm text-neutral-600">
+                {assignment.courseTitle} • {assignment.assignmentType}
+              </p>
+            </div>
+            <button
+              className="rounded-md p-2 hover:bg-neutral-100"
+              onClick={onClose}
+              aria-label="Close"
+            >
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+
+          <div className="px-6 py-5 space-y-3 text-sm text-neutral-800">
+            <p><strong>Description:</strong> {assignment.description || 'No description provided.'}</p>
+            <p><strong>Deadline:</strong> {assignment.deadline}</p>
+            <p><strong>Max Score:</strong> {assignment.maxScore ?? '—'}</p>
+            <p><strong>Status:</strong> {assignment.status}</p>
+          </div>
+
+          {assignment.status === 'Need Grading' && (
+            <form onSubmit={handleGradeSubmit} className="px-6 pb-6 space-y-4 border-t border-neutral-200 pt-4">
+              <h4 className="text-base font-medium text-neutral-900">Grade Assignment</h4>
+              <div>
+                <label className="block text-sm font-medium mb-1 text-neutral-700">
+                  Score
+                </label>
+                <input
+                  type="number"
+                  className="h-10 w-full rounded-xl border border-neutral-200 px-3 text-sm"
+                  value={score}
+                  onChange={(e) => setScore(Number(e.target.value))}
+                  placeholder="e.g. 85"
+                  disabled={working}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1 text-neutral-700">
+                  Feedback
+                </label>
+                <textarea
+                  className="min-h-[80px] w-full rounded-xl border border-neutral-200 px-3 py-2 text-sm"
+                  value={feedback}
+                  onChange={(e) => setFeedback(e.target.value)}
+                  placeholder="Enter feedback"
+                  disabled={working}
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="inline-flex items-center rounded-xl border border-neutral-300 bg-white px-4 py-2 text-sm text-neutral-800 hover:bg-neutral-50"
+                  disabled={working}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={working}
+                  className="inline-flex items-center rounded-xl bg-[#0B5CD7] px-4 py-2 text-sm text-white hover:brightness-95"
+                >
+                  {working ? 'Submitting…' : 'Submit Grade'}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      </div>
+    </>,
+    root
+  );
+}
+
+
+/* ---------------- Headless Select ---------------- */
+function HeadlessSelect({ value, onChange, placeholder, options, disabled }: any) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find((o: any) => o.value === value);
   return (
     <div className="relative">
       <button
         type="button"
-        className="input w-full text-left pr-10"
-        aria-haspopup="listbox"
-        aria-expanded={open}
+        className={`h-11 w-full rounded-xl border border-neutral-200 bg-[#F4F5F7] px-3 pr-10 text-left text-sm text-neutral-900 focus:border-[#0B5CD7] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#0B5CD7]/20 ${
+          disabled ? "opacity-60 pointer-events-none" : ""
+        }`}
         onClick={() => setOpen((o) => !o)}
+        disabled={disabled}
       >
-        {value ? options.find((o) => o.value === value)?.label ?? '' : <span className="text-neutral-400">{placeholder || 'Select…'}</span>}
-        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-500 pointer-events-none" />
+        {selected ? (
+          selected.label
+        ) : (
+          <span className="text-neutral-400">
+            {placeholder || "Select..."}
+          </span>
+        )}
+        <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-500" />
       </button>
       {open && (
-        <div className="absolute left-0 right-0 mt-2 z-20 rounded-xl border border-neutral-200 bg-white shadow-lg overflow-hidden">
-          <ul className="py-1 max-h-60 overflow-auto" role="listbox">
-            {options.map((opt) => {
-              const isSel = opt.value === value
+        <div className="absolute left-0 right-0 z-20 mt-2 overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-lg">
+          <ul role="listbox" className="max-h-60 overflow-auto py-1">
+            {options.map((opt: any) => {
+              const isSel = opt.value === value;
               return (
                 <li
                   key={opt.value}
                   role="option"
                   aria-selected={isSel}
-                  onClick={() => { onChange(opt.value); setOpen(false) }}
-                  className="px-3 py-2 cursor-pointer flex items-center justify-between hover:bg-[#0B5CD7] hover:text-white text-sm"
+                  onClick={() => {
+                    onChange(opt.value);
+                    setOpen(false);
+                  }}
+                  className="flex cursor-pointer items-center justify-between px-3 py-2 text-sm hover:bg-[#0B5CD7] hover:text-white"
                 >
                   <span>{opt.label}</span>
                   {isSel && <Check className="h-4 w-4 opacity-90" />}
                 </li>
-              )
+              );
             })}
+            {options.length === 0 && (
+              <li className="px-3 py-2 text-sm text-neutral-500">
+                No options
+              </li>
+            )}
           </ul>
         </div>
       )}
     </div>
-  )
-}
-
-/* ---------------- Mutation overlay (no blur) ---------------- */
-function UltraLoader({ show, label = '' }: { show: boolean; label?: string }) {
-  if (!show) return null
-  return (
-    <div aria-busy="true" role="status" className="fixed inset-0 z-[9999] grid place-items-center bg-black/20">
-      <div className="rounded-2xl border border-neutral-200 bg-white/90 px-6 py-5 shadow-2xl">
-        <div className="flex items-center gap-4">
-          <div className="relative h-10 w-10">
-            <span className="absolute inset-0 rounded-full border-4 border-neutral-200" />
-            <span className="absolute inset-0 rounded-full border-4 border-transparent border-t-[#0B5CD7] animate-spin" />
-          </div>
-          <div className="min-w-[180px]">
-            <div className="text-sm font-medium text-neutral-900">{label || 'Please wait…'}</div>
-            <div className="mt-2 flex items-center gap-1">
-              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#0B5CD7] [animation-delay:-.2s]" />
-              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#0B5CD7] [animation-delay:-.1s]" />
-              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-[#0B5CD7]" />
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-/* ---------------- util ---------------- */
-function toDateOnly(d?: string) {
-  if (!d) return ''
-  const s = String(d)
-  return s.length >= 10 ? s.slice(0, 10) : s
+  );
 }
