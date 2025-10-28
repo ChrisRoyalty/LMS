@@ -14,7 +14,7 @@ type Assignment = {
   dueDate: string;
   grade: number | null;
   status: "PENDING" | "SUBMITTED" | "GRADED";
-  description?: string; // Optional description field
+  description?: string;
 };
 
 export default function StudentAssignments() {
@@ -105,14 +105,23 @@ export default function StudentAssignments() {
       const res = await api.get(url, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      console.log("[StudentAssignments] ✅ Success:", res.data);
+      console.log("[StudentAssignments] ✅ Success:", { filter, data: res.data });
       setAssignments(Array.isArray(res.data.assignments) ? res.data.assignments : []);
       setFetchedTabs((prev) => new Set(prev).add(tab));
+      if (filter === "submitted" && (!res.data.assignments || res.data.assignments.length === 0)) {
+        console.log("[StudentAssignments] ℹ️ No submitted assignments found");
+        showToast({
+          kind: "info",
+          title: "No Submitted Assignments",
+          message: "You haven't submitted any assignments yet.",
+        });
+      }
     } catch (err: any) {
       console.error("[StudentAssignments] ❌ Error:", {
         message: err.message,
         status: err.response?.status,
         data: err.response?.data,
+        filter,
       });
       if (err.response?.status === 401) {
         setError("Session expired. Redirecting to login...");
@@ -129,11 +138,11 @@ export default function StudentAssignments() {
       } else if (err.response?.status === 404) {
         setAssignments([]);
         setFetchedTabs((prev) => new Set(prev).add(tab));
-        setError("No assignments found for this filter.");
+        setError(`No ${filter} assignments found.`);
         showToast({
           kind: "info",
-          title: "No Assignments",
-          message: "No assignments found for this filter.",
+          title: `No ${filter.charAt(0).toUpperCase() + filter.slice(1)} Assignments`,
+          message: `No ${filter} assignments found for this filter.`,
         });
       } else {
         setError(err?.response?.data?.message || "Failed to load assignments");
@@ -154,7 +163,6 @@ export default function StudentAssignments() {
       setIsDownloading(true);
       console.log("[StudentAssignments] 🔄 Generating download for assignment:", { assignmentId: assignment.id });
       
-      // Generate file content with assignment details
       const content = `
 Assignment Details
 =================
@@ -336,8 +344,14 @@ ${assignment.description ? `Description: ${assignment.description}` : ""}
           {visible.length === 0 && !isFetching ? (
             <div className="text-center py-12">
               <FileText className="h-12 w-12 mx-auto text-neutral-300 mb-4" />
-              <p className="text-sm text-neutral-500">No assignments yet</p>
-              <p className="text-xs text-neutral-400 mt-1">Check back later for new assignments</p>
+              <p className="text-sm text-neutral-500">
+                {tab === "Submitted" ? "No submitted assignments yet" : "No assignments yet"}
+              </p>
+              <p className="text-xs text-neutral-400 mt-1">
+                {tab === "Submitted"
+                  ? "Submit an assignment to see it here"
+                  : "Check back later for new assignments"}
+              </p>
             </div>
           ) : (
             visible.map((a) => (

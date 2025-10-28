@@ -20,6 +20,7 @@ type AssignmentType = "QUIZ" | "PROJECT" | "HOMEWORK" | "CAPSTONE";
 type AssignmentStatus = "Active" | "Completed" | "Need Grading" | "Draft";
 type Assignment = {
   id: string;
+  submissionId?: string;
   title: string;
   description?: string;
   courseId: string;
@@ -41,10 +42,9 @@ function useDebounce<T>(value: T, delay = 300): T {
   }, [value, delay]);
   return v;
 }
-// TODO: Replace with dynamic user data from context or localStorage
+
 const me = getUser();
 const instructorId = me?.id ?? null;
-
 
 /* ---------------- Instructor Assignments Page ---------------- */
 export default function InstructorAssignments() {
@@ -60,7 +60,6 @@ export default function InstructorAssignments() {
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const [viewOpen, setViewOpen] = useState<Assignment | null>(null);
-
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -83,7 +82,7 @@ export default function InstructorAssignments() {
           Authorization: `Bearer ${token}`,
           "Cache-Control": "no-cache",
         },
-        params: { _t: Date.now() }, // Cache-busting
+        params: { _t: Date.now() },
       })
       .then((res) => {
         console.log("[Courses] Response:", res.data);
@@ -127,89 +126,86 @@ export default function InstructorAssignments() {
       });
   }, []);
 
-  /* --- Load assignments when course changes --- */
+  /* --- Load assignments when course or tab changes --- */
   useEffect(() => {
-  const token = localStorage.getItem("token");
-  if (!token) {
-    showToast({
-      kind: "error",
-      title: "Authentication Error",
-      message: "Please log in to view assignments",
-    });
-    setLoading(false);
-    return;
-  }
-
-  async function fetchAssignments() {
-    try {
-      setLoading(true);
-
-      let endpoint = "";
-      if (tab === "all" || tab === "active") {
-        // default route (by course)
-        if (!courseId) {
-          console.log("[Assignments] No courseId, skipping fetch");
-          setLoading(false);
-          return;
-        }
-        endpoint = `/api/assignments/assignments/${courseId}`;
-      } else if (tab === "submitted") {
-        // assignments needing grading
-        endpoint = `/api/assignments/assignments/${instructorId}`;
-      } else if (tab === "graded") {
-        // graded assignments
-        endpoint = `/api/assignments/overview/${instructorId}?filter=graded`;
-      }
-
-      console.log(`[Assignments] Fetching: ${endpoint}`);
-      const res = await api.get(endpoint, {
-        headers: { Authorization: `Bearer ${token}` },
-        params: { _t: Date.now() },
-      });
-      console.log("[Assignments] Response:", res.data);
-
-      const payload = res.data;
-      const list: any[] =
-        payload?.data ??
-        payload?.assignments ??
-        (Array.isArray(payload) ? payload : []);
-
-      const mapped: Assignment[] = (list || []).map((a) => ({
-        id: String(a.id ?? crypto.randomUUID()),
-        title: String(a.title ?? "Untitled"),
-        description: a.description ?? "",
-        courseId: String(a.courseId ?? courseId),
-        courseTitle: a.courseTitle || "",
-        deadline: String(a.deadline ?? "").slice(0, 10),
-        maxScore: a.maxScore ?? undefined,
-        assignmentType: String(a.assignmentType ?? "HOMEWORK").toUpperCase() as AssignmentType,
-        submissions: Number(a.submissions ?? 0),
-        total: Number(a.total ?? 25),
-        status:
-          tab === "submitted"
-            ? "Need Grading"
-            : tab === "graded"
-            ? "Completed"
-            : "Active",
-      }));
-
-      setRows(mapped);
-    } catch (err: any) {
-      console.error("[Assignments] Load error:", err);
+    const token = localStorage.getItem("token");
+    if (!token) {
       showToast({
         kind: "error",
-        title: "Failed to load assignments",
-        message: err?.response?.data?.message || "Please try again",
+        title: "Authentication Error",
+        message: "Please log in to view assignments",
       });
-      setRows([]);
-    } finally {
       setLoading(false);
+      return;
     }
-  }
 
-  void fetchAssignments();
-}, [tab, courseId]);
+    async function fetchAssignments() {
+      try {
+        setLoading(true);
 
+        let endpoint = "";
+        if (tab === "all" || tab === "active") {
+          if (!courseId) {
+            console.log("[Assignments] No courseId, skipping fetch");
+            setLoading(false);
+            return;
+          }
+          endpoint = `/api/assignments/assignments/${courseId}`;
+        } else if (tab === "submitted") {
+          endpoint = `/api/assignments/overview/${instructorId}?filter=submitted`;
+        } else if (tab === "graded") {
+          endpoint = `/api/assignments/overview/${instructorId}?filter=graded`;
+        }
+
+        console.log(`[Assignments] Fetching: ${endpoint}`);
+        const res = await api.get(endpoint, {
+          headers: { Authorization: `Bearer ${token}` },
+          params: { _t: Date.now() },
+        });
+        console.log("[Assignments] Response:", res.data);
+
+        const payload = res.data;
+        const list: any[] =
+          payload?.assignments ??
+          payload?.data ??
+          (Array.isArray(payload) ? payload : []);
+
+        const mapped: Assignment[] = (list || []).map((a) => ({
+          id: String(a.id ?? crypto.randomUUID()),
+          submissionId: a.submissionId ? String(a.submissionId) : undefined,
+          title: String(a.title ?? "Untitled"),
+          description: a.description ?? "",
+          courseId: String(a.courseId ?? courseId),
+          courseTitle: a.courseTitle || "",
+          deadline: String(a.dueDate ?? a.deadline ?? "").slice(0, 10),
+          maxScore: a.maxScore ?? a.grade ?? undefined,
+          assignmentType: String(a.type ?? a.assignmentType ?? "HOMEWORK").toUpperCase() as AssignmentType,
+          submissions: Number(a.submissions ?? 0),
+          total: Number(a.total ?? 25),
+          status:
+            tab === "submitted"
+              ? "Need Grading"
+              : tab === "graded" || a.status === "GRADED"
+              ? "Completed"
+              : "Active",
+        }));
+
+        setRows(mapped);
+      } catch (err: any) {
+        console.error("[Assignments] Load error:", err);
+        showToast({
+          kind: "error",
+          title: "Failed to load assignments",
+          message: err?.response?.data?.message || "Please try again",
+        });
+        setRows([]);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    void fetchAssignments();
+  }, [tab, courseId]);
 
   /* --- Delete Assignment --- */
   const handleDelete = useCallback(async () => {
@@ -424,7 +420,6 @@ export default function InstructorAssignments() {
     if (tab === "graded") list = list.filter((r) => r.status === "Completed");
     if (tab === "submitted") list = list.filter((r) => r.status === "Need Grading");
 
-
     const term = dq.trim().toLowerCase();
     if (!term) return list;
     return list.filter((r) =>
@@ -485,19 +480,17 @@ export default function InstructorAssignments() {
           </div>
 
           {["all", "active", "graded", "submitted"].map((t) => (
-  <TabPill
-    key={t}
-    active={tab === t}
-    onClick={() => setTab(t as any)}
-    disabled={working}
-  >
-    {t === "submitted"
-      ? "Submitted"
-      : t.charAt(0).toUpperCase() + t.slice(1)}
-  </TabPill>
+            <TabPill
+              key={t}
+              active={tab === t}
+              onClick={() => setTab(t as any)}
+              disabled={working}
+            >
+              {t === "submitted"
+                ? "Submitted"
+                : t.charAt(0).toUpperCase() + t.slice(1)}
+            </TabPill>
           ))}
-
-
         </div>
 
         {/* Table */}
@@ -527,15 +520,13 @@ export default function InstructorAssignments() {
                 filtered.map((a) => (
                   <tr key={a.id} className="border-b border-neutral-200 last:border-0">
                     <Td>
-                    <button
-                      className="text-[#0B5CD7] hover:underline"
-                      onClick={() => setViewOpen(a)}
-                    >
-                      {a.title}
-                    </button>
-                  </Td>
-
-
+                      <button
+                        className="text-[#0B5CD7] hover:underline"
+                        onClick={() => setViewOpen(a)}
+                      >
+                        {a.title}
+                      </button>
+                    </Td>
                     <Td>
                       {a.courseTitle ||
                         courses.find((c) => c.id === a.courseId)?.title ||
@@ -593,7 +584,6 @@ export default function InstructorAssignments() {
           working={working}
           submitText="Create Assignment"
         />
-        
       )}
       
       {editOpen && (
@@ -640,17 +630,16 @@ export default function InstructorAssignments() {
         </Modal>
       )}
       {viewOpen && (
-  <AssignmentDetailsModal
-    assignment={viewOpen}
-    onClose={() => setViewOpen(null)}
-    onGraded={(updated) => {
-      setRows((prev) =>
-        prev.map((r) => (r.id === updated.id ? updated : r))
-      );
-    }}
-  />
-)}
-
+        <AssignmentDetailsModal
+          assignment={viewOpen}
+          onClose={() => setViewOpen(null)}
+          onGraded={(updated) => {
+            setRows((prev) =>
+              prev.map((r) => (r.id === updated.id ? updated : r))
+            );
+          }}
+        />
+      )}
     </>
   );
 }
@@ -734,7 +723,7 @@ function Modal({
     document.body.appendChild(root);
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
-    const esc = (e: KeyboardEvent) => e.key === "Escape"  && onClose();
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", esc);
     return () => {
       window.removeEventListener("keydown", esc);
@@ -1010,22 +999,22 @@ function AssignmentDetailsModal({
   onGraded: (updated: Assignment) => void;
 }) {
   const [working, setWorking] = useState(false);
-  const [score, setScore] = useState<number | ''>('');
-  const [feedback, setFeedback] = useState('');
+  const [score, setScore] = useState<number | "">("");
+  const [feedback, setFeedback] = useState("");
   const [root] = useState(() => {
-    const el = document.createElement('div');
-    el.setAttribute('data-modal-root', 'true');
+    const el = document.createElement("div");
+    el.setAttribute("data-modal-root", "true");
     return el;
   });
 
   useEffect(() => {
     document.body.appendChild(root);
     const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    const esc = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
-    window.addEventListener('keydown', esc);
+    document.body.style.overflow = "hidden";
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", esc);
     return () => {
-      window.removeEventListener('keydown', esc);
+      window.removeEventListener("keydown", esc);
       document.body.style.overflow = prev;
       try { document.body.removeChild(root); } catch {}
     };
@@ -1033,44 +1022,62 @@ function AssignmentDetailsModal({
 
   async function handleGradeSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (score === '' || !feedback.trim()) {
+    if (score === "" || !feedback.trim()) {
       showToast({
-        kind: 'error',
-        title: 'Missing Fields',
-        message: 'Please enter both score and feedback',
+        kind: "error",
+        title: "Missing Fields",
+        message: "Please enter both score and feedback",
+      });
+      return;
+    }
+    if (!assignment.submissionId) {
+      showToast({
+        kind: "error",
+        title: "Invalid Submission",
+        message: "No submission ID available for grading",
       });
       return;
     }
 
     try {
       setWorking(true);
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem("token");
+      console.log("[Grade] Submitting grade:", {
+        submissionId: assignment.submissionId,
+        score,
+        feedback,
+        token: token?.slice(0, 10) + "...",
+      });
       const res = await api.post(
-        `/api/submit/grade/${assignment.id}`,
-        { score, feedback },
+        `/api/submit/grade/${assignment.submissionId}`,
+        { score: Number(score), feedback },
         {
           headers: { Authorization: `Bearer ${token}` },
         }
       );
 
-      console.log('[Grade] Response:', res.data);
+      console.log("[Grade] Response:", res.data);
       showToast({
-        kind: 'success',
-        title: 'Graded Successfully',
-        message: res.data?.message || 'Assignment graded successfully',
+        kind: "success",
+        title: "Graded Successfully",
+        message: res.data?.message || "Assignment graded successfully",
       });
 
       onGraded({
         ...assignment,
-        status: 'Completed',
+        status: "Completed",
       });
       onClose();
     } catch (err: any) {
-      console.error('[Grade] Error:', err);
+      console.error("[Grade] Error:", {
+        message: err.message,
+        status: err.response?.status,
+        data: err.response?.data,
+      });
       showToast({
-        kind: 'error',
-        title: 'Grade Failed',
-        message: err?.response?.data?.message || 'Please try again',
+        kind: "error",
+        title: "Grade Failed",
+        message: err?.response?.data?.message || "Please try again",
       });
     } finally {
       setWorking(false);
@@ -1105,13 +1112,16 @@ function AssignmentDetailsModal({
           </div>
 
           <div className="px-6 py-5 space-y-3 text-sm text-neutral-800">
-            <p><strong>Description:</strong> {assignment.description || 'No description provided.'}</p>
+            <p><strong>Description:</strong> {assignment.description || "No description provided."}</p>
             <p><strong>Deadline:</strong> {assignment.deadline}</p>
-            <p><strong>Max Score:</strong> {assignment.maxScore ?? '—'}</p>
+            <p><strong>Max Score:</strong> {assignment.maxScore ?? "—"}</p>
             <p><strong>Status:</strong> {assignment.status}</p>
+            {assignment.submissionId && (
+              <p><strong>Submission ID:</strong> {assignment.submissionId}</p>
+            )}
           </div>
 
-          {assignment.status === 'Need Grading' && (
+          {assignment.status === "Need Grading" && (
             <form onSubmit={handleGradeSubmit} className="px-6 pb-6 space-y-4 border-t border-neutral-200 pt-4">
               <h4 className="text-base font-medium text-neutral-900">Grade Assignment</h4>
               <div>
@@ -1122,7 +1132,7 @@ function AssignmentDetailsModal({
                   type="number"
                   className="h-10 w-full rounded-xl border border-neutral-200 px-3 text-sm"
                   value={score}
-                  onChange={(e) => setScore(Number(e.target.value))}
+                  onChange={(e) => setScore(Number(e.target.value) || "")}
                   placeholder="e.g. 85"
                   disabled={working}
                 />
@@ -1153,7 +1163,7 @@ function AssignmentDetailsModal({
                   disabled={working}
                   className="inline-flex items-center rounded-xl bg-[#0B5CD7] px-4 py-2 text-sm text-white hover:brightness-95"
                 >
-                  {working ? 'Submitting…' : 'Submit Grade'}
+                  {working ? "Submitting…" : "Submit Grade"}
                 </button>
               </div>
             </form>
@@ -1164,7 +1174,6 @@ function AssignmentDetailsModal({
     root
   );
 }
-
 
 /* ---------------- Headless Select ---------------- */
 function HeadlessSelect({ value, onChange, placeholder, options, disabled }: any) {
